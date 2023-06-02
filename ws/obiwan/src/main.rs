@@ -24,9 +24,9 @@ struct Args {
     #[arg(long, default_value = "nobody")]
     unprivileged_user: String,
 
-    /// The port to listen on.
-    #[arg(short = 'p', long, default_value = "69")]
-    port: u16,
+    /// The address to listen on.
+    #[arg(short = 'l', long, default_value = "127.0.0.1:69")]
+    listen_address: String,
 
     /// The directory to serve via TFTP.
     directory: PathBuf,
@@ -91,6 +91,10 @@ fn main() -> Result<()> {
 
     info!("Hello!");
     debug!("Command line parameters: {:?}", args);
+
+    let port =
+        std::net::UdpSocket::bind(&args.listen_address).context("Failed to bind server port")?;
+    debug!("Opened server port: {:?}", port);
 
     let _root_directory = drop_privileges(&args.unprivileged_user, &args.directory)?;
 

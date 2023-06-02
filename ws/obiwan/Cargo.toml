@@ -4,3 +4,10 @@ version = "0.1.0"
 authors = ["Julian Stecklina <js@alien8.de>"]
 edition = "2021"
 license = "AGPL-3.0-or-later"
+
+[dependencies]
+log = "0.4.18"
+anyhow = "1.0.71"
+clap = { version = "4.3.1", features = [ "derive" ] }
+stderrlog = "0.5.4"
+nix = "0.26.2"

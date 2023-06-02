@@ -1,6 +1,8 @@
+use std::path::{Path, PathBuf};
+
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use log::{debug, info};
+use log::{debug, info, warn};
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]
@@ -25,26 +27,52 @@ struct Args {
     /// The port to listen on.
     #[arg(short = 'p', long, default_value = "69")]
     port: u16,
+
+    /// The directory to serve via TFTP.
+    directory: PathBuf,
 }
 
-fn drop_privileges_if_root(unprivileged_user: &str) -> Result<()> {
-    use nix::unistd::{geteuid, setuid, User};
+/// Try to revoke privileges. This may or may not succeed depending on
+/// our privileges.
+///
+/// The returned path is refers to the passed directory and is
+/// modified depending on whether we managed to actually change to a
+/// new root directory.
+fn drop_privileges(unprivileged_user: &str, directory: &Path) -> Result<PathBuf> {
+    use nix::{
+        errno::Errno,
+        unistd::{chroot, geteuid, setuid, User},
+    };
 
-    if !geteuid().is_root() {
-        info!("Not running as root. Good!");
-        return Ok(());
+    // We need to lookup the user before chroot, otherwise the user db is gone.
+    let unprivileged_uid = User::from_name(unprivileged_user)
+        .context("Failed to lookup unprivileged user")?
+        .ok_or_else(|| anyhow!("Failed to look up unprivileged user. Does it exist?"))?
+        .uid;
+
+    let new_root = match chroot(directory) {
+        Ok(_) => {
+            info!("Changed root directory to: {}", directory.display());
+            Ok("/".into())
+        }
+        Err(Errno::EPERM) => {
+            warn!("Can't drop filesystem privileges due to insufficient permissions. Start as root or with CAP_SYS_CHROOT, if this is desired.");
+            Ok(directory.to_owned())
+        }
+        Err(e) => Err(e).context("Failed to chroot to directory"),
+    }?;
+
+    if geteuid().is_root() {
+        setuid(unprivileged_uid).context("Failed to drop privileges")?;
+        info!("Dropped privileges to user '{}'.", unprivileged_user);
+    } else {
+        info!(
+            "Will not drop privileges to {}, because we are not running as root.",
+            unprivileged_user
+        );
     }
 
-    setuid(
-        User::from_name(unprivileged_user)
-            .context("Failed to lookup unprivileged user")?
-            .ok_or_else(|| anyhow!("Failed to look up unprivileged user. Does it exist?"))?
-            .uid,
-    )
-    .context("Failed to drop privileges")?;
-
-    info!("Dropped privileges to user '{}'.", unprivileged_user);
-    Ok(())
+    Ok(new_root)
 }
 
 fn main() -> Result<()> {
@@ -64,7 +92,7 @@ fn main() -> Result<()> {
     info!("Hello!");
     debug!("Command line parameters: {:?}", args);
 
-    drop_privileges_if_root(&args.unprivileged_user)?;
+    let _root_directory = drop_privileges(&args.unprivileged_user, &args.directory)?;
 
     Ok(())
 }

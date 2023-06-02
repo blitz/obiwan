@@ -11,3 +11,5 @@ anyhow = "1.0.71"
 clap = { version = "4.3.1", features = [ "derive" ] }
 stderrlog = "0.5.4"
 nix = "0.26.2"
+# TODO Strip this down.
+tokio = { version = "1.28.2", features = ["full"] }

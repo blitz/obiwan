@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]
@@ -75,6 +75,11 @@ fn drop_privileges(unprivileged_user: &str, directory: &Path) -> Result<PathBuf>
     Ok(new_root)
 }
 
+async fn server_main() -> Result<()> {
+    error!("Oops. There is no server implementation yet. Bailing out.");
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -98,5 +103,14 @@ fn main() -> Result<()> {
 
     let _root_directory = drop_privileges(&args.unprivileged_user, &args.directory)?;
 
+    // We use the simple scheduler of Tokio until it becomes a performance issue.
+    let tokio_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to start I/O engine")?;
+
+    tokio_runtime.block_on(async { server_main().await })?;
+
+    info!("Graceful exit. Bye!");
     Ok(())
 }

@@ -75,9 +75,16 @@ fn drop_privileges(unprivileged_user: &str, directory: &Path) -> Result<PathBuf>
     Ok(new_root)
 }
 
-async fn server_main() -> Result<()> {
-    error!("Oops. There is no server implementation yet. Bailing out.");
-    Ok(())
+async fn server_main(socket: tokio::net::UdpSocket) -> Result<()> {
+    loop {
+        let mut buf = vec![0u8; 1 << 16];
+        let (len, addr) = socket
+            .recv_from(&mut buf)
+            .await
+            .context("Failed to read from UDP socket")?;
+
+        println!("received {:?} bytes from {:?}", len, addr);
+    }
 }
 
 fn main() -> Result<()> {
@@ -97,9 +104,9 @@ fn main() -> Result<()> {
     info!("Hello!");
     debug!("Command line parameters: {:?}", args);
 
-    let port =
+    let socket =
         std::net::UdpSocket::bind(&args.listen_address).context("Failed to bind server port")?;
-    debug!("Opened server port: {:?}", port);
+    debug!("Opened server socket: {:?}", socket);
 
     let _root_directory = drop_privileges(&args.unprivileged_user, &args.directory)?;
 
@@ -109,7 +116,8 @@ fn main() -> Result<()> {
         .build()
         .context("Failed to start I/O engine")?;
 
-    tokio_runtime.block_on(async { server_main().await })?;
+    tokio_runtime
+        .block_on(async { server_main(tokio::net::UdpSocket::from_std(socket)?).await })?;
 
     info!("Graceful exit. Bye!");
     Ok(())

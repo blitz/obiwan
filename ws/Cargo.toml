@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    # Libraries
+    # ... none yet ...
+
+    # Binaries
+    "obiwan",
+]

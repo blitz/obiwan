@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]

@@ -9,8 +9,9 @@ use std::{error::Error, ffi::OsStr, fmt::Display, os::unix::prelude::OsStrExt, p
 
 use nom::{
     bytes::complete::{tag, take_while, take_while_m_n},
+    multi::many0,
     number::complete::be_u16,
-    sequence::{terminated, tuple},
+    sequence::{pair, terminated, tuple},
     IResult,
 };
 
@@ -64,7 +65,7 @@ mod opcodes {
 }
 
 struct ProtoOption<'a> {
-    key: &'a [u8],
+    name: &'a [u8],
     value: &'a [u8],
 }
 
@@ -99,28 +100,40 @@ fn null_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
     terminated(take_while(|b| b != 0), tag([0]))(input)
 }
 
+fn take_option(input: &[u8]) -> IResult<&[u8], ProtoOption> {
+    let (input, (name, value)) = pair(null_string, null_string)(input)?;
+
+    Ok((input, ProtoOption { name, value }))
+}
+
+fn take_options(input: &[u8]) -> IResult<&[u8], Vec<ProtoOption>> {
+    many0(take_option)(input)
+}
+
 fn take_rrq(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
-    let (input, (filename, mode)) = tuple((null_string, null_string))(input)?; // TODO Options
+    let (input, (filename, mode, options)) =
+        tuple((null_string, null_string, take_options))(input)?; // TODO Options
 
     Ok((
         input,
         ProtoPacket::Rrq {
             filename,
             mode,
-            options: vec![],
+            options,
         },
     ))
 }
 
 fn take_wrq(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
-    let (input, (filename, mode)) = tuple((null_string, null_string))(input)?; // TODO Options
+    let (input, (filename, mode, options)) =
+        tuple((null_string, null_string, take_options))(input)?; // TODO Options
 
     Ok((
         input,
         ProtoPacket::Wrq {
             filename,
             mode,
-            options: vec![],
+            options,
         },
     ))
 }
@@ -152,9 +165,9 @@ fn take_error(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
 }
 
 fn take_oack(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
-    // TODO Parse options
+    let (input, options) = take_options(input)?;
 
-    Ok((input, ProtoPacket::OAck { options: vec![] }))
+    Ok((input, ProtoPacket::OAck { options }))
 }
 
 fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
@@ -214,6 +227,23 @@ fn mode_from_u8(input: &[u8]) -> Result<RequestMode, ParseError> {
     }
 }
 
+fn string_from_u8(input: &[u8]) -> Result<String, ParseError> {
+    std::str::from_utf8(input)
+        .map_err(|_| ParseError::InvalidString)
+        .map(|s| s.to_owned())
+}
+
+fn option_from_proto(proto_option: &ProtoOption) -> Result<RequestOption, ParseError> {
+    Ok(RequestOption::Unknown {
+        name: string_from_u8(proto_option.name)?,
+        value: string_from_u8(proto_option.value)?,
+    })
+}
+
+fn options_from_proto(proto_options: &[ProtoOption]) -> Result<Vec<RequestOption>, ParseError> {
+    proto_options.iter().map(|o| option_from_proto(o)).collect()
+}
+
 impl TryFrom<&[u8]> for Packet {
     type Error = ParseError;
 
@@ -224,7 +254,7 @@ impl TryFrom<&[u8]> for Packet {
             ProtoPacket::Rrq {
                 filename,
                 mode,
-                options: _,
+                options,
             } => Packet::Rrq {
                 // We avoid going through String to accept filenames
                 // with invalid UTF-8. While the TFTP spec only allows
@@ -232,17 +262,17 @@ impl TryFrom<&[u8]> for Packet {
                 // modern Linux system.
                 filename: PathBuf::from(OsStr::from_bytes(filename).to_owned()),
                 mode: mode_from_u8(mode)?,
-                options: vec![],
+                options: options_from_proto(&options)?,
             },
             ProtoPacket::Wrq {
                 filename,
                 mode,
-                options: _,
+                options,
             } => Packet::Wrq {
                 // See the comment in Rrq above.
                 filename: PathBuf::from(OsStr::from_bytes(filename).to_owned()),
                 mode: mode_from_u8(mode)?,
-                options: vec![],
+                options: options_from_proto(&options)?,
             },
             ProtoPacket::Data { block, data } => Packet::Data {
                 block,
@@ -258,7 +288,9 @@ impl TryFrom<&[u8]> for Packet {
                     .map_err(|_| ParseError::InvalidString)?
                     .to_owned(),
             },
-            ProtoPacket::OAck { options: _ } => Packet::OAck { options: vec![] },
+            ProtoPacket::OAck { options } => Packet::OAck {
+                options: options_from_proto(&options)?,
+            },
         };
 
         Ok(packet)
@@ -303,6 +335,27 @@ mod tests {
     }
 
     #[test]
+    fn rrq_with_options() {
+        assert_eq!(
+            Packet::try_from(b"\x00\x01\0octet\0key1\0value1\0key2\0value2\0".as_ref()),
+            Ok(Packet::Rrq {
+                filename: PathBuf::from_str("").unwrap(),
+                mode: RequestMode::Octet,
+                options: vec![
+                    RequestOption::Unknown {
+                        name: "key1".to_string(),
+                        value: "value1".to_string()
+                    },
+                    RequestOption::Unknown {
+                        name: "key2".to_string(),
+                        value: "value2".to_string()
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
     fn wrq_without_options() {
         assert_eq!(
             Packet::try_from(b"\x00\x02\0octet\0".as_ref()),
@@ -330,6 +383,27 @@ mod tests {
                 options: vec![]
             })
         )
+    }
+
+    #[test]
+    fn wrq_with_options() {
+        assert_eq!(
+            Packet::try_from(b"\x00\x02\0octet\0key1\0value1\0key2\0value2\0".as_ref()),
+            Ok(Packet::Wrq {
+                filename: PathBuf::from_str("").unwrap(),
+                mode: RequestMode::Octet,
+                options: vec![
+                    RequestOption::Unknown {
+                        name: "key1".to_string(),
+                        value: "value1".to_string()
+                    },
+                    RequestOption::Unknown {
+                        name: "key2".to_string(),
+                        value: "value2".to_string()
+                    }
+                ]
+            })
+        );
     }
 
     #[test]
@@ -363,10 +437,26 @@ mod tests {
     }
 
     #[test]
-    fn oack_without_options() {
+    fn oack() {
         assert_eq!(
             Packet::try_from(b"\x00\x06".as_ref()),
             Ok(Packet::OAck { options: vec![] })
-        )
+        );
+
+        assert_eq!(
+            Packet::try_from(b"\x00\x06key1\0value1\0key2\0value2\0".as_ref()),
+            Ok(Packet::OAck {
+                options: vec![
+                    RequestOption::Unknown {
+                        name: "key1".to_string(),
+                        value: "value1".to_string()
+                    },
+                    RequestOption::Unknown {
+                        name: "key2".to_string(),
+                        value: "value2".to_string()
+                    }
+                ]
+            })
+        );
     }
 }

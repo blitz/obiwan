@@ -8,7 +8,7 @@
 use std::{error::Error, ffi::OsStr, fmt::Display, os::unix::prelude::OsStrExt, path::PathBuf};
 
 use nom::{
-    bytes::complete::{tag, take_while},
+    bytes::complete::{tag, take_while, take_while_m_n},
     number::complete::be_u16,
     sequence::{terminated, tuple},
     IResult,
@@ -79,6 +79,13 @@ enum ProtoPacket<'a> {
         mode: &'a [u8],
         options: Vec<ProtoOption<'a>>,
     },
+    Data {
+        block: u16,
+        data: &'a [u8],
+    },
+    Ack {
+        block: u16,
+    },
 }
 
 fn null_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
@@ -111,6 +118,19 @@ fn take_wrq(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     ))
 }
 
+fn take_data(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
+    let (input, block) = be_u16(input)?;
+    let (input, data) = take_while_m_n(0, 512, |_| true)(input)?;
+
+    Ok((input, ProtoPacket::Data { block, data }))
+}
+
+fn take_ack(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
+    let (input, block) = be_u16(input)?;
+
+    Ok((input, ProtoPacket::Ack { block }))
+}
+
 fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     let (input, opcode) = be_u16(input)?;
 
@@ -119,6 +139,8 @@ fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     match opcode {
         opcodes::RRQ => take_rrq(input),
         opcodes::WRQ => take_wrq(input),
+        opcodes::DATA => take_data(input),
+        opcodes::ACK => take_ack(input),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::NoneOf,
@@ -196,6 +218,11 @@ impl TryFrom<&[u8]> for Packet {
                 mode: mode_from_u8(mode)?,
                 options: vec![],
             },
+            ProtoPacket::Data { block, data } => Packet::Data {
+                block,
+                data: data.to_owned(),
+            },
+            ProtoPacket::Ack { block } => Packet::Ack { block },
         };
 
         Ok(packet)
@@ -266,6 +293,25 @@ mod tests {
                 mode: RequestMode::Octet,
                 options: vec![]
             })
+        )
+    }
+
+    #[test]
+    fn data() {
+        assert_eq!(
+            Packet::try_from(b"\x00\x03\x12\x34hello world".as_ref()),
+            Ok(Packet::Data {
+                block: 0x1234,
+                data: b"hello world".to_vec(),
+            })
+        )
+    }
+
+    #[test]
+    fn ack() {
+        assert_eq!(
+            Packet::try_from(b"\x00\x04\x12\x34".as_ref()),
+            Ok(Packet::Ack { block: 0x1234 })
         )
     }
 }

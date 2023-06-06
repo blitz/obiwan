@@ -74,6 +74,11 @@ enum ProtoPacket<'a> {
         mode: &'a [u8],
         options: Vec<ProtoOption<'a>>,
     },
+    Wrq {
+        filename: &'a [u8],
+        mode: &'a [u8],
+        options: Vec<ProtoOption<'a>>,
+    },
 }
 
 fn null_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
@@ -93,6 +98,19 @@ fn take_rrq(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     ))
 }
 
+fn take_wrq(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
+    let (input, (filename, mode)) = tuple((null_string, null_string))(input)?; // TODO Options
+
+    Ok((
+        input,
+        ProtoPacket::Wrq {
+            filename,
+            mode,
+            options: vec![],
+        },
+    ))
+}
+
 fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     let (input, opcode) = be_u16(input)?;
 
@@ -100,6 +118,7 @@ fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
 
     match opcode {
         opcodes::RRQ => take_rrq(input),
+        opcodes::WRQ => take_wrq(input),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::NoneOf,
@@ -167,6 +186,16 @@ impl TryFrom<&[u8]> for Packet {
                 mode: mode_from_u8(mode)?,
                 options: vec![],
             },
+            ProtoPacket::Wrq {
+                filename,
+                mode,
+                options: _,
+            } => Packet::Wrq {
+                // See the comment in Rrq above.
+                filename: PathBuf::from(OsStr::from_bytes(filename).to_owned()),
+                mode: mode_from_u8(mode)?,
+                options: vec![],
+            },
         };
 
         Ok(packet)
@@ -203,6 +232,36 @@ mod tests {
         assert_eq!(
             Packet::try_from(b"\x00\x01zOo\0oCtet\0".as_ref()),
             Ok(Packet::Rrq {
+                filename: PathBuf::from_str("zOo").unwrap(),
+                mode: RequestMode::Octet,
+                options: vec![]
+            })
+        )
+    }
+
+    #[test]
+    fn wrq_without_options() {
+        assert_eq!(
+            Packet::try_from(b"\x00\x02\0octet\0".as_ref()),
+            Ok(Packet::Wrq {
+                filename: PathBuf::from_str("").unwrap(),
+                mode: RequestMode::Octet,
+                options: vec![]
+            })
+        );
+
+        assert_eq!(
+            Packet::try_from(b"\x00\x02foo\0NeTAscIi\0".as_ref()),
+            Ok(Packet::Wrq {
+                filename: PathBuf::from_str("foo").unwrap(),
+                mode: RequestMode::Netascii,
+                options: vec![]
+            })
+        );
+
+        assert_eq!(
+            Packet::try_from(b"\x00\x02zOo\0oCtet\0".as_ref()),
+            Ok(Packet::Wrq {
                 filename: PathBuf::from_str("zOo").unwrap(),
                 mode: RequestMode::Octet,
                 options: vec![]

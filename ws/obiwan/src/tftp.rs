@@ -90,6 +90,9 @@ enum ProtoPacket<'a> {
         error_code: u16,
         error_msg: &'a [u8],
     },
+    OAck {
+        options: Vec<ProtoOption<'a>>,
+    },
 }
 
 fn null_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
@@ -148,6 +151,12 @@ fn take_error(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     ))
 }
 
+fn take_oack(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
+    // TODO Parse options
+
+    Ok((input, ProtoPacket::OAck { options: vec![] }))
+}
+
 fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     let (input, opcode) = be_u16(input)?;
 
@@ -159,6 +168,7 @@ fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
         opcodes::DATA => take_data(input),
         opcodes::ACK => take_ack(input),
         opcodes::ERROR => take_error(input),
+        opcodes::OACK => take_oack(input),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::NoneOf,
@@ -250,6 +260,7 @@ impl TryFrom<&[u8]> for Packet {
                     .map_err(|_| ParseError::InvalidString)?
                     .to_owned(),
             },
+            ProtoPacket::OAck { options: _ } => Packet::OAck { options: vec![] },
         };
 
         Ok(packet)
@@ -350,6 +361,14 @@ mod tests {
                 error_code: 0x0102,
                 error_msg: "Some error!".to_owned()
             })
+        )
+    }
+
+    #[test]
+    fn oack_without_options() {
+        assert_eq!(
+            Packet::try_from(b"\x00\x06".as_ref()),
+            Ok(Packet::OAck { options: vec![] })
         )
     }
 }

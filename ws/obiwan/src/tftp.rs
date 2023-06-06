@@ -160,8 +160,6 @@ fn take_oack(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
 fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     let (input, opcode) = be_u16(input)?;
 
-    eprintln!("opcode {}", opcode);
-
     match opcode {
         opcodes::RRQ => take_rrq(input),
         opcodes::WRQ => take_wrq(input),

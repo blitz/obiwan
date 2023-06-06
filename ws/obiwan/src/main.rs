@@ -1,3 +1,5 @@
+mod tftp;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};

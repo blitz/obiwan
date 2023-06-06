@@ -86,6 +86,10 @@ enum ProtoPacket<'a> {
     Ack {
         block: u16,
     },
+    Error {
+        error_code: u16,
+        error_msg: &'a [u8],
+    },
 }
 
 fn null_string(input: &[u8]) -> IResult<&[u8], &[u8]> {
@@ -131,6 +135,19 @@ fn take_ack(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     Ok((input, ProtoPacket::Ack { block }))
 }
 
+fn take_error(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
+    let (input, error_code) = be_u16(input)?;
+    let (input, error_msg) = null_string(input)?;
+
+    Ok((
+        input,
+        ProtoPacket::Error {
+            error_code,
+            error_msg,
+        },
+    ))
+}
+
 fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
     let (input, opcode) = be_u16(input)?;
 
@@ -141,6 +158,7 @@ fn packet(input: &[u8]) -> IResult<&[u8], ProtoPacket> {
         opcodes::WRQ => take_wrq(input),
         opcodes::DATA => take_data(input),
         opcodes::ACK => take_ack(input),
+        opcodes::ERROR => take_error(input),
         _ => Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::NoneOf,
@@ -223,6 +241,15 @@ impl TryFrom<&[u8]> for Packet {
                 data: data.to_owned(),
             },
             ProtoPacket::Ack { block } => Packet::Ack { block },
+            ProtoPacket::Error {
+                error_code,
+                error_msg,
+            } => Packet::Error {
+                error_code,
+                error_msg: std::str::from_utf8(error_msg)
+                    .map_err(|_| ParseError::InvalidString)?
+                    .to_owned(),
+            },
         };
 
         Ok(packet)
@@ -312,6 +339,17 @@ mod tests {
         assert_eq!(
             Packet::try_from(b"\x00\x04\x12\x34".as_ref()),
             Ok(Packet::Ack { block: 0x1234 })
+        )
+    }
+
+    #[test]
+    fn error() {
+        assert_eq!(
+            Packet::try_from(b"\x00\x05\x01\x02Some error!\0".as_ref()),
+            Ok(Packet::Error {
+                error_code: 0x0102,
+                error_msg: "Some error!".to_owned()
+            })
         )
     }
 }

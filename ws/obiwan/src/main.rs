@@ -88,6 +88,13 @@ fn clear_port(mut addr: SocketAddr) -> SocketAddr {
     addr
 }
 
+async fn send_packet(socket: &tokio::net::UdpSocket, packet: tftp::Packet) -> Result<()> {
+    trace!("{packet:?}");
+    socket.send(&packet.to_vec()).await?;
+
+    Ok(())
+}
+
 async fn handle_connection(
     local_addr: SocketAddr,
     remote_addr: SocketAddr,
@@ -97,6 +104,8 @@ async fn handle_connection(
     trace!("{remote_addr}: {initial_request:?}");
 
     let socket = tokio::net::UdpSocket::bind(clear_port(local_addr)).await?;
+    debug!("{remote_addr}: Local address: {}", socket.local_addr()?);
+
     socket.connect(remote_addr).await?;
 
     match initial_request {
@@ -116,18 +125,27 @@ async fn handle_connection(
                 mode
             );
 
-            let _response = tftp::Packet::Error {
-                error_code: 2, // TODO Access violation
-                error_msg: "This server only supports reading files".to_owned(),
-            };
-
-            // TODO send error
+            send_packet(
+                &socket,
+                tftp::Packet::Error {
+                    error_code: 2, // TODO Access violation
+                    error_msg: "This server only supports reading files".to_owned(),
+                },
+            )
+            .await?;
         }
 
         request => {
             warn!("{remote_addr}: Invalid initial request: {request:?}");
 
-            // TODO error
+            send_packet(
+                &socket,
+                tftp::Packet::Error {
+                    error_code: 4, // TODO Illegal operation
+                    error_msg: "Only read or write requests can start connections".to_owned(),
+                },
+            )
+            .await?;
         }
     }
 

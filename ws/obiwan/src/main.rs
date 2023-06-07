@@ -1,10 +1,14 @@
 mod tftp;
 
-use std::path::{Path, PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use log::{debug, info, warn};
+use log::{debug, error, info, trace, warn};
+use tokio::runtime::Handle;
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]
@@ -77,15 +81,79 @@ fn drop_privileges(unprivileged_user: &str, directory: &Path) -> Result<PathBuf>
     Ok(new_root)
 }
 
-async fn server_main(socket: tokio::net::UdpSocket) -> Result<()> {
+/// Sets the port of a socket address to zero. This is useful to let
+/// the OS choose the port number for us.
+fn clear_port(mut addr: SocketAddr) -> SocketAddr {
+    addr.set_port(0);
+    addr
+}
+
+async fn handle_connection(
+    local_addr: SocketAddr,
+    remote_addr: SocketAddr,
+    initial_request: tftp::Packet,
+) -> Result<()> {
+    debug!("{remote_addr}: Establishing new connection.");
+    trace!("{remote_addr}: {initial_request:?}");
+
+    let socket = tokio::net::UdpSocket::bind(clear_port(local_addr)).await?;
+    socket.connect(remote_addr).await?;
+
+    match initial_request {
+        tftp::Packet::Rrq {
+            filename: _,
+            mode: _,
+            options: _,
+        } => todo!(),
+        tftp::Packet::Wrq {
+            filename,
+            mode,
+            options: _,
+        } => {
+            warn!(
+                "{remote_addr}: Write {} in {:?} mode denied. This server only supports reading.",
+                filename.display(),
+                mode
+            );
+
+            let _response = tftp::Packet::Error {
+                error_code: 2, // TODO Access violation
+                error_msg: "This server only supports reading files".to_owned(),
+            };
+
+            // TODO send error
+        }
+
+        request => {
+            warn!("{remote_addr}: Invalid initial request: {request:?}");
+
+            // TODO error
+        }
+    }
+
+    Ok(())
+}
+
+async fn server_main(runtime: &Handle, socket: tokio::net::UdpSocket) -> Result<()> {
+    let local_addr = socket.local_addr()?;
+
     loop {
         let mut buf = vec![0u8; 1 << 16];
-        let (len, addr) = socket
+        let (len, remote_addr) = socket
             .recv_from(&mut buf)
             .await
             .context("Failed to read from UDP socket")?;
 
-        println!("received {:?} bytes from {:?}", len, addr);
+        match tftp::Packet::try_from(&buf[0..len]) {
+            Ok(packet) => {
+                runtime.spawn(async move {
+                    if let Err(e) = handle_connection(local_addr, remote_addr, packet).await {
+                        error!("Connection to {remote_addr} died due to an error: {e}");
+                    }
+                });
+            }
+            Err(e) => warn!("Ignoring packet: {e}"),
+        }
     }
 }
 
@@ -108,18 +176,28 @@ fn main() -> Result<()> {
 
     let socket =
         std::net::UdpSocket::bind(&args.listen_address).context("Failed to bind server port")?;
+
+    // Because we create the socket without Tokio, we need to make
+    // sure it is non-blocking. Otherwise, Tokio will hang when
+    // reading from it and not schedule other tasks.
+    socket.set_nonblocking(true)?;
+
     debug!("Opened server socket: {:?}", socket);
 
     let _root_directory = drop_privileges(&args.unprivileged_user, &args.directory)?;
 
-    // We use the simple scheduler of Tokio until it becomes a performance issue.
     let tokio_runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("Failed to start I/O engine")?;
 
-    tokio_runtime
-        .block_on(async { server_main(tokio::net::UdpSocket::from_std(socket)?).await })?;
+    tokio_runtime.block_on(async {
+        server_main(
+            tokio_runtime.handle(),
+            tokio::net::UdpSocket::from_std(socket)?,
+        )
+        .await
+    })?;
 
     info!("Graceful exit. Bye!");
     Ok(())

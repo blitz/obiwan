@@ -1,3 +1,4 @@
+mod path;
 mod tftp;
 
 use std::{

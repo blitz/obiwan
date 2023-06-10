@@ -101,6 +101,21 @@ async fn send_packet(socket: &tokio::net::UdpSocket, packet: tftp::Packet) -> Re
     Ok(())
 }
 
+async fn send_error(
+    socket: &tokio::net::UdpSocket,
+    error_code: u16,
+    error_msg: &str,
+) -> Result<()> {
+    send_packet(
+        socket,
+        tftp::Packet::Error {
+            error_code,
+            error_msg: error_msg.to_owned(),
+        },
+    )
+    .await
+}
+
 async fn handle_read(socket: tokio::net::UdpSocket, root: &Path, path: &Path) -> Result<()> {
     match tokio::fs::File::open(root.join(
         normalize(path).ok_or_else(|| anyhow!("Failed to normalize path: {}", path.display()))?,
@@ -109,14 +124,7 @@ async fn handle_read(socket: tokio::net::UdpSocket, root: &Path, path: &Path) ->
     {
         Ok(_file) => todo!(),
         Err(e) => {
-            send_packet(
-                &socket,
-                tftp::Packet::Error {
-                    error_code: 0,
-                    error_msg: e.to_string(),
-                },
-            )
-            .await?;
+            send_error(&socket, 0, &e.to_string()).await?;
 
             Ok(())
         }
@@ -167,12 +175,10 @@ async fn handle_connection(
         request => {
             warn!("{remote_addr}: Invalid initial request: {request:?}");
 
-            send_packet(
+            send_error(
                 &socket,
-                tftp::Packet::Error {
-                    error_code: 4, // TODO Illegal operation
-                    error_msg: "Only read or write requests can start connections".to_owned(),
-                },
+                4, // TODO Illegal operation
+                "Only read or write requests can start connections",
             )
             .await?;
         }

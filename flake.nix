@@ -82,7 +82,8 @@
           my-crate = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
           });
-        in {
+        in
+        {
           pre-commit = {
             settings = {
 

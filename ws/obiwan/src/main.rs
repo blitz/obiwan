@@ -4,12 +4,17 @@ mod tftp;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::{debug, error, info, trace, warn};
+use path::normalize;
 use tokio::runtime::Handle;
+
+#[allow(dead_code)]
+const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]
@@ -96,9 +101,32 @@ async fn send_packet(socket: &tokio::net::UdpSocket, packet: tftp::Packet) -> Re
     Ok(())
 }
 
+async fn handle_read(socket: tokio::net::UdpSocket, root: &Path, path: &Path) -> Result<()> {
+    match tokio::fs::File::open(root.join(
+        normalize(path).ok_or_else(|| anyhow!("Failed to normalize path: {}", path.display()))?,
+    ))
+    .await
+    {
+        Ok(_file) => todo!(),
+        Err(e) => {
+            send_packet(
+                &socket,
+                tftp::Packet::Error {
+                    error_code: 0,
+                    error_msg: e.to_string(),
+                },
+            )
+            .await?;
+
+            Ok(())
+        }
+    }
+}
+
 async fn handle_connection(
     local_addr: SocketAddr,
     remote_addr: SocketAddr,
+    root: &Path,
     initial_request: tftp::Packet,
 ) -> Result<()> {
     debug!("{remote_addr}: Establishing new connection.");
@@ -111,10 +139,10 @@ async fn handle_connection(
 
     match initial_request {
         tftp::Packet::Rrq {
-            filename: _,
+            filename,
             mode: _,
             options: _,
-        } => todo!(),
+        } => handle_read(socket, root, &filename).await?,
         tftp::Packet::Wrq {
             filename,
             mode,
@@ -153,11 +181,11 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn server_main(runtime: &Handle, socket: tokio::net::UdpSocket) -> Result<()> {
+async fn server_main(runtime: &Handle, socket: tokio::net::UdpSocket, root: &Path) -> Result<()> {
     let local_addr = socket.local_addr()?;
+    let mut buf = vec![0u8; 1 << 16];
 
     loop {
-        let mut buf = vec![0u8; 1 << 16];
         let (len, remote_addr) = socket
             .recv_from(&mut buf)
             .await
@@ -165,8 +193,10 @@ async fn server_main(runtime: &Handle, socket: tokio::net::UdpSocket) -> Result<
 
         match tftp::Packet::try_from(&buf[0..len]) {
             Ok(packet) => {
+                let root = root.to_owned();
                 runtime.spawn(async move {
-                    if let Err(e) = handle_connection(local_addr, remote_addr, packet).await {
+                    if let Err(e) = handle_connection(local_addr, remote_addr, &root, packet).await
+                    {
                         error!("Connection to {remote_addr} died due to an error: {e}");
                     }
                 });
@@ -203,7 +233,7 @@ fn main() -> Result<()> {
 
     debug!("Opened server socket: {:?}", socket);
 
-    let _root_directory = drop_privileges(&args.unprivileged_user, &args.directory)?;
+    let root_directory = drop_privileges(&args.unprivileged_user, &args.directory)?;
 
     let tokio_runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -214,6 +244,7 @@ fn main() -> Result<()> {
         server_main(
             tokio_runtime.handle(),
             tokio::net::UdpSocket::from_std(socket)?,
+            &root_directory,
         )
         .await
     })?;

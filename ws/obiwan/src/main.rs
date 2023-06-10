@@ -17,11 +17,14 @@ use tokio::{
     runtime::Handle,
 };
 
-#[allow(dead_code)]
 const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 // The default block size of a TFTP connection.
 const DEFAULT_BLKSIZE: usize = 512;
+
+// How many times we retry sending packets if the other side doesn't
+// respond in time.
+const MAX_RETRIES: u32 = 5;
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]
@@ -137,24 +140,87 @@ async fn send_data(socket: &tokio::net::UdpSocket, block: u16, data: &[u8]) -> R
 async fn send_file(socket: tokio::net::UdpSocket, mut file: tokio::fs::File) -> Result<()> {
     let mut buf: [u8; DEFAULT_BLKSIZE] = [0; DEFAULT_BLKSIZE];
 
-    let block: u16 = 0;
+    // TODO We need to handle the case where the file has more blocks than we can represent in u16:
+    //
+    // https://opendev.org/starlingx/integ/commit/572cd24c4971c713f5fe06df55a8d78c3553c4ed
 
-    // Block number and maximal block size are 16-bit, so the overflow
-    // should never happen. But in case we mess up the packet parsing
-    // of these potentially malicious values, it's better to be
-    // defensive.
+    let blksize: u64 = DEFAULT_BLKSIZE.try_into().unwrap();
 
-    file.seek(SeekFrom::Start(
-        u64::from(block)
-            .checked_mul(u64::try_from(DEFAULT_BLKSIZE).unwrap())
-            .ok_or_else(|| anyhow!("Integer overflow."))?,
-    ))
-    .await?;
+    // If the file has a size that is a multiple of the block size, we
+    // actually want to send one empty packet.
+    //
+    // TODO We need a test case for this.
+    let mut cur_block: u16 = 1;
+    let mut retry_count = 0;
 
-    let len = file.read(&mut buf).await?;
-    let buf = &buf[0..len];
+    loop {
+        if retry_count > MAX_RETRIES {
+            warn!("Client didn't respond after multiple retries. Abandoning connection.");
+            return Ok(());
+        }
 
-    send_data(&socket, block, buf).await?;
+        // Block number and maximal block size are 16-bit, so the overflow
+        // should never happen. But in case we mess up the packet parsing
+        // of these potentially malicious values, it's better to be
+        // defensive.
+
+        assert!(cur_block > 0);
+        file.seek(SeekFrom::Start(
+            u64::from(cur_block - 1) // Block numbers start at 1
+                .checked_mul(u64::try_from(DEFAULT_BLKSIZE).unwrap())
+                .ok_or_else(|| anyhow!("Integer overflow."))?,
+        ))
+        .await?;
+
+        let len = file.read(&mut buf).await?;
+        trace!("Read {len} bytes from file as block {cur_block}");
+        let buf = &buf[0..len];
+
+        send_data(&socket, cur_block, buf).await?;
+
+        match tokio::time::timeout(SESSION_TIMEOUT, async {
+            let mut buf = vec![0u8; 1 << 16];
+            let len = socket.recv(&mut buf).await?;
+
+            tftp::Packet::try_from(&buf[0..len]).context("Failed to parse incoming packet")
+        })
+        .await
+        {
+            Ok(recv_result) => match recv_result? {
+                tftp::Packet::Ack { block } if block == cur_block => {
+                    trace!("Client acknowledged block {block}");
+                    cur_block = block + 1;
+                }
+                tftp::Packet::Error {
+                    error_code,
+                    error_msg,
+                } => {
+                    warn!("Client sent an error ({error_code}): {}", error_msg);
+                    return Ok(());
+                }
+                other => {
+                    warn!("Client sent an unexpected packet: {:?}", other);
+                    return Ok(());
+                }
+            },
+            Err(_) => {
+                // Timeout, we want to retry.
+                retry_count += 1;
+                continue;
+            }
+        }
+
+        retry_count = 0;
+
+        if len != usize::try_from(blksize).unwrap() {
+            debug!(
+                "Successfully sent {cur_block} block{}",
+                if cur_block == 1 { "" } else { "s" }
+            );
+
+            break;
+        }
+    }
 
     Ok(())
 }

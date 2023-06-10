@@ -1,9 +1,9 @@
 [package]
 name = "obiwan"
-version = "0.1.0"
-authors = ["Julian Stecklina <js@alien8.de>"]
-edition = "2021"
-license = "AGPL-3.0-or-later"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [dependencies]
 log = "0.4.18"

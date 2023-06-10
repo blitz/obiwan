@@ -162,7 +162,7 @@ fn option_from_proto(proto_option: &ProtoOption) -> Result<RequestOption, ParseE
 }
 
 fn options_from_proto(proto_options: &[ProtoOption]) -> Result<Vec<RequestOption>, ParseError> {
-    proto_options.iter().map(|o| option_from_proto(o)).collect()
+    proto_options.iter().map(option_from_proto).collect()
 }
 
 fn option_to_proto(option: &RequestOption) -> ProtoOption {
@@ -177,37 +177,40 @@ fn options_to_proto(options: &[RequestOption]) -> Vec<ProtoOption> {
 }
 
 impl Packet {
-    pub fn to_vec(self) -> Vec<u8> {
+    pub fn to_vec(&self) -> Vec<u8> {
         let proto_packet = match self {
             Packet::Rrq {
                 filename,
                 mode,
                 options,
             } => ProtoPacket::Rrq {
-                filename: NullString(filename.into_os_string().into_vec()),
-                mode: NullString(mode_to_u8(mode)),
-                options: options_to_proto(&options),
+                filename: NullString(filename.clone().into_os_string().into_vec()),
+                mode: NullString(mode_to_u8(*mode)),
+                options: options_to_proto(options),
             },
             Packet::Wrq {
                 filename,
                 mode,
                 options,
             } => ProtoPacket::Wrq {
-                filename: NullString(filename.into_os_string().into_vec()),
-                mode: NullString(mode_to_u8(mode)),
-                options: options_to_proto(&options),
+                filename: NullString(filename.clone().into_os_string().into_vec()),
+                mode: NullString(mode_to_u8(*mode)),
+                options: options_to_proto(options),
             },
-            Packet::Data { block, data } => ProtoPacket::Data { block, data },
-            Packet::Ack { block } => ProtoPacket::Ack { block },
+            Packet::Data { block, data } => ProtoPacket::Data {
+                block: *block,
+                data: data.clone(),
+            },
+            Packet::Ack { block } => ProtoPacket::Ack { block: *block },
             Packet::Error {
                 error_code,
                 error_msg,
             } => ProtoPacket::Error {
-                error_code,
-                error_msg: error_msg.into(),
+                error_code: *error_code,
+                error_msg: error_msg.clone().into(),
             },
             Packet::OAck { options } => ProtoPacket::OAck {
-                options: options_to_proto(&options),
+                options: options_to_proto(options),
             },
         };
 
@@ -251,10 +254,7 @@ impl TryFrom<&[u8]> for Packet {
                 mode: mode_from_u8(&mode)?,
                 options: options_from_proto(&options)?,
             },
-            ProtoPacket::Data { block, data } => Packet::Data {
-                block,
-                data: data.to_owned(),
-            },
+            ProtoPacket::Data { block, data } => Packet::Data { block, data },
             ProtoPacket::Ack { block } => Packet::Ack { block },
             ProtoPacket::Error {
                 error_code,

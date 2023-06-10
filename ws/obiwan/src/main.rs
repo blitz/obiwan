@@ -2,6 +2,7 @@ mod path;
 mod tftp;
 
 use std::{
+    io::SeekFrom,
     net::SocketAddr,
     path::{Path, PathBuf},
     time::Duration,
@@ -11,10 +12,16 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::{debug, error, info, trace, warn};
 use path::normalize;
-use tokio::runtime::Handle;
+use tokio::{
+    io::{AsyncReadExt, AsyncSeekExt},
+    runtime::Handle,
+};
 
 #[allow(dead_code)]
 const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
+
+// The default block size of a TFTP connection.
+const DEFAULT_BLKSIZE: usize = 512;
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]
@@ -116,13 +123,54 @@ async fn send_error(
     .await
 }
 
+async fn send_data(socket: &tokio::net::UdpSocket, block: u16, data: &[u8]) -> Result<()> {
+    send_packet(
+        socket,
+        tftp::Packet::Data {
+            block,
+            data: data.to_owned(),
+        },
+    )
+    .await
+}
+
+async fn send_file(socket: tokio::net::UdpSocket, mut file: tokio::fs::File) -> Result<()> {
+    let mut buf: [u8; DEFAULT_BLKSIZE] = [0; DEFAULT_BLKSIZE];
+
+    let block: u16 = 0;
+
+    // Block number and maximal block size are 16-bit, so the overflow
+    // should never happen. But in case we mess up the packet parsing
+    // of these potentially malicious values, it's better to be
+    // defensive.
+
+    file.seek(SeekFrom::Start(
+        u64::from(block)
+            .checked_mul(u64::try_from(DEFAULT_BLKSIZE).unwrap())
+            .ok_or_else(|| anyhow!("Integer overflow."))?,
+    ))
+    .await?;
+
+    let len = file.read(&mut buf).await?;
+    let buf = &buf[0..len];
+
+    send_data(&socket, block, buf).await?;
+
+    Ok(())
+}
+
 async fn handle_read(socket: tokio::net::UdpSocket, root: &Path, path: &Path) -> Result<()> {
     match tokio::fs::File::open(root.join(
         normalize(path).ok_or_else(|| anyhow!("Failed to normalize path: {}", path.display()))?,
     ))
     .await
     {
-        Ok(_file) => todo!(),
+        Ok(file) if file.metadata().await?.is_file() => send_file(socket, file).await,
+        Ok(_) => {
+            send_error(&socket, 0, "Can't open a directory").await?;
+
+            Ok(())
+        }
         Err(e) => {
             send_error(&socket, 0, &e.to_string()).await?;
 

@@ -1,1 +1,3 @@
 /ws/target
+/.direnv
+/.pre-commit-config.yaml

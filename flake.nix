@@ -54,6 +54,17 @@
         "aarch64-linux"
       ];
 
+      flake.nixosModules.lanzaboote = moduleWithSystem (
+        perSystem@{ config }:
+        { ... }: {
+          imports = [
+            ./nix/module.nix
+          ];
+
+          services.obiwan.package = perSystem.config.packages.default;
+        }
+      );
+
       perSystem = { config, system, pkgs, ... }:
         let
           craneLib = crane.lib.${system};

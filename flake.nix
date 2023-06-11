@@ -74,7 +74,7 @@
             ]);
 
           # Build *just* the cargo dependencies, so we can reuse all
-          # of that work (e.g. via cachix) when running in CI
+          # of that work (e.g. via cachix) when running in CI.
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
           # Build the actual crate itself, reusing the dependency
@@ -84,14 +84,9 @@
           });
         in
         {
-          pre-commit = {
-            settings = {
-
-              hooks = {
-                nixpkgs-fmt.enable = true;
-                typos.enable = true;
-              };
-            };
+          pre-commit.settings.hooks = {
+            nixpkgs-fmt.enable = true;
+            typos.enable = true;
           };
 
           checks = {

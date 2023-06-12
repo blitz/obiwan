@@ -16,53 +16,65 @@ in
     root = mkOption {
       default = "/srv/tftp";
       type = types.path;
-      description = "The directory that will be shared via TFTP"
-        };
-
-      listenAddress = mkOption {
-        description = "Listen on this IP";
-        default = "127.0.0.1";
-        type = types.string;
-      };
-
-      listenPort = mkOption {
-        description = "Listen on this port";
-        default = 67;
-        type = types.integer;
-      };
+      description = "The directory that will be shared via TFTP";
     };
 
-    config = mkIf cfg.enable {
-      systemd.services.atftpd = {
-        description = "Obiwan TFTP Server";
-        after = [ "network.target" ];
-        wantedBy = [ "multi-user.target" ];
+    openFirewall = mkOption {
+      default = false;
+      type = types.bool;
+      description = "Open firewall ports";
+    };
 
-        serviceConfig = {
-          ExecStart = "${cfg.package}/bin/obiwan -l '${cfg.listenAddress}:${cfg.listenPort}' '${cfg.root}'";
+    listenAddress = mkOption {
+      description = "Listen on this IP";
+      default = "127.0.0.1";
+      type = types.str;
+    };
 
-          DynamicUser = true;
-          NoNewPrivileges = true;
-          RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
-          PrivateDevices = true;
-          PrivateUsers = true;
-          ProtectClock = true;
-          ProtectControlGroups = true;
-          ProtectHome = true;
-          ProtectKernelLogs = true;
-          ProtectKernelModules = true;
-          ProtectKernelTunables = true;
-          SystemCallArchitectures = "native";
+    listenPort = mkOption {
+      description = "Listen on this port";
+      default = 69;
+      type = types.int;
+    };
+  };
 
-          confinement = {
-            enable = true;
-            binSh = null;
-          };
+  config = mkIf cfg.enable {
 
-          AmbientCapabilities = [
-            "CAP_SYS_CHROOT"
-          ] ++ optional (cfg.listenPort < 1024) "CAP_NET_BIND_SERVICE" l
-            };
-        };
+    networking.firewall.allowedUDPPorts = mkIf cfg.openFirewall [ cfg.listenPort ];
+
+    systemd.services.obiwan = {
+      description = "Obiwan TFTP Server";
+      after = [ "network.target" ];
+      wantedBy = [ "multi-user.target" ];
+
+      # This is currently not compatible with DynamicUser.
+      #
+      # confinement = {
+      #   enable = true;
+      #   binSh = null;
+      # };
+
+      serviceConfig = {
+        ExecStart = "${cfg.package}/bin/obiwan -vvl '${cfg.listenAddress}:${toString cfg.listenPort}' '${cfg.root}'";
+
+        # DynamicUser = true;
+        # NoNewPrivileges = true;
+        # RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        # PrivateDevices = true;
+        # PrivateUsers = true;
+        # ProtectClock = true;
+        # ProtectControlGroups = true;
+        # ProtectHome = true;
+        # ProtectKernelLogs = true;
+        # ProtectKernelModules = true;
+        # ProtectKernelTunables = true;
+        # SystemCallArchitectures = "native";
+        #
+        # CapabilityBoundingSet = [
+        #   "CAP_SYS_CHROOT"
+        #   "CAP_SET_UID"
+        # ] ++ optional (cfg.listenPort < 1024) "CAP_NET_BIND_SERVICE";
       };
-    }
+    };
+  };
+}

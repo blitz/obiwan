@@ -54,7 +54,7 @@
         "aarch64-linux"
       ];
 
-      flake.nixosModules.lanzaboote = moduleWithSystem (
+      flake.nixosModules.default = moduleWithSystem (
         perSystem@{ config }:
         { ... }: {
           imports = [
@@ -100,7 +100,10 @@
             typos.enable = true;
           };
 
-          checks = {
+          checks = (import ./nix/tests.nix {
+            inherit pkgs;
+            module = self.nixosModules.default;
+          }) // {
             # Build the crate as part of `nix flake check` for convenience
             inherit my-crate;
 

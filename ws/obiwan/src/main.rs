@@ -2,6 +2,7 @@ mod path;
 mod simple_proto;
 mod simple_fs;
 mod tftp;
+mod tftp_proto;
 
 use std::{
     io::SeekFrom,

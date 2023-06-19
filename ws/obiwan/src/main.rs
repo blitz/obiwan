@@ -1,4 +1,5 @@
 mod path;
+mod simple_proto;
 mod tftp;
 
 use std::{

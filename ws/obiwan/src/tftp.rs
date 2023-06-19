@@ -275,10 +275,9 @@ impl TryFrom<&[u8]> for Packet {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+
+    use std::str::FromStr;
 
     #[test]
     fn parse_rrq_without_options() {

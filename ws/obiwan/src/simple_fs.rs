@@ -60,3 +60,60 @@ impl Filesystem for AsyncFilesystem {
         tokio::fs::File::open(path).await
     }
 }
+
+#[cfg(test)]
+#[async_trait]
+impl File for Vec<u8> {
+    type Error = ();
+
+    async fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        if offset >= u64::try_from(self.len()).map_err(|_| ())? {
+            return Ok(0);
+        }
+
+        let offset = usize::try_from(offset).map_err(|_| ())?;
+        let len = buf.len().min(self.len() - offset);
+
+        buf[..len].copy_from_slice(&self[offset..(offset + len)]);
+        Ok(len)
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl Filesystem for std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    type File = Vec<u8>;
+    type Error = ();
+
+    async fn open(&self, path: &Path) -> Result<Self::File, Self::Error> {
+        self.get(path).ok_or(()).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn can_read_btree_fs() {
+        let map: BTreeMap<std::path::PathBuf, Vec<u8>> =
+            BTreeMap::from([(PathBuf::from_str("/foo").unwrap(), vec![1, 2, 3, 4])]);
+
+        let mut file = map
+            .open(Path::new("/foo"))
+            .await
+            .expect("Failed to open file");
+
+        let mut buf = [0; 64];
+
+        assert_eq!(file.read(300, &mut buf).await, Ok(0)); // EOF
+
+        assert_eq!(file.read(0, &mut buf).await, Ok(4));
+        assert_eq!(&buf[0..4], &[1, 2, 3, 4]);
+
+        assert_eq!(file.read(3, &mut buf).await, Ok(1));
+        assert_eq!(&buf[0..1], &[4]);
+    }
+}

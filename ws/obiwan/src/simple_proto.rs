@@ -32,5 +32,8 @@ pub trait SimpleUdpProtocol {
     type Packet;
     type Error;
 
-    fn handle_event(event: Event<Self::Packet>) -> Result<Response<Self::Packet>, Self::Error>;
+    fn handle_event(
+        &mut self,
+        event: Event<Self::Packet>,
+    ) -> Result<Response<Self::Packet>, Self::Error>;
 }

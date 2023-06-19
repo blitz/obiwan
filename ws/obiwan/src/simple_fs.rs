@@ -2,13 +2,13 @@
 //! degree that the TFTP protocol will need. It's main purpose is to
 //! facilitate unit testing.
 
-use std::{io::SeekFrom, path::Path};
+use std::{fmt::Debug, io::SeekFrom, path::Path};
 
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 #[async_trait]
-pub trait File {
+pub trait File: Debug {
     type Error;
 
     /// Reads as many bytes as possible into `buf`. Returns the number
@@ -18,7 +18,7 @@ pub trait File {
 }
 
 #[async_trait]
-trait Filesystem {
+pub trait Filesystem: Debug {
     type File: File;
     type Error;
 
@@ -48,8 +48,8 @@ impl File for tokio::fs::File {
     }
 }
 
-#[derive(Debug, Clone)]
-struct AsyncFilesystem {}
+#[derive(Debug, Clone, Default)]
+pub struct AsyncFilesystem {}
 
 #[async_trait]
 impl Filesystem for AsyncFilesystem {

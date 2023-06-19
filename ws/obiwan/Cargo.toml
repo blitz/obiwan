@@ -14,3 +14,4 @@ nix = "0.26.2"
 # TODO Strip this down.
 tokio = { version = "1.28.2", features = ["full"] }
 binrw = "0.11.2"
+async-trait = "0.1.68"

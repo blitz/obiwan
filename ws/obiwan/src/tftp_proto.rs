@@ -1,5 +1,7 @@
 //! This module implements the TFTP protocol in terms of [`simple_proto`].
 
+use std::time::Duration;
+
 use crate::{
     simple_fs,
     simple_proto::{self, Event, Response},
@@ -7,6 +9,8 @@ use crate::{
 };
 
 use anyhow::Result;
+
+const DEFAULT_TFTP_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy)]
 enum State {
@@ -57,5 +61,34 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
         match self.state {
             State::WaitingForInitialPacket => self.handle_initial_event(event),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, str::FromStr};
+
+    use crate::simple_proto::{ConnectionStatus, SimpleUdpProtocol};
+
+    use super::*;
+
+    #[test]
+    fn simple_read() {
+        let fs =
+            simple_fs::MapFilesystem::from([(PathBuf::from_str("/foo").unwrap(), vec![1, 2, 3])]);
+        let mut con = Connection::new_with_filesystem(fs);
+
+        assert_eq!(
+            con.handle_event(Event::PacketReceived(tftp::Packet::Rrq {
+                filename: PathBuf::from("/foo"),
+                mode: tftp::RequestMode::Octet,
+                options: vec![]
+            }))
+            .unwrap(),
+            Response {
+                packet: Some(tftp::Packet::Ack { block: 0 }),
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT)
+            }
+        );
     }
 }

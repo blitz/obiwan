@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::{
     simple_fs,
-    simple_proto::{self, Event, Response},
+    simple_proto::{self, ConnectionStatus, Event, Response},
     tftp,
 };
 
@@ -19,27 +19,50 @@ enum State {
 
 /// The current state of the TFTP connection.
 #[derive(Debug)]
-pub struct Connection<FS: simple_fs::Filesystem> {
-    filesystem: FS,
+pub enum Connection<FS: simple_fs::Filesystem> {
+    Dead,
+    WaitingForInitialPacket { filesystem: FS },
+}
 
-    state: State,
+fn error_response(error_code: u16, error_msg: &str) -> Response<tftp::Packet> {
+    Response {
+        packet: Some(tftp::Packet::Error {
+            error_code,
+            error_msg: error_msg.to_owned(),
+        }),
+        next_status: ConnectionStatus::Terminated,
+    }
 }
 
 impl<FS: simple_fs::Filesystem> Connection<FS> {
     pub fn new_with_filesystem(filesystem: FS) -> Self {
-        Self {
-            filesystem,
-            state: State::WaitingForInitialPacket,
-        }
+        Self::WaitingForInitialPacket { filesystem }
     }
 
     fn handle_initial_event(
-        &mut self,
+        filesystem: &mut FS,
         event: Event<tftp::Packet>,
-    ) -> Result<Response<tftp::Packet>> {
+    ) -> Result<(Self, Response<tftp::Packet>)> {
         match event {
-            simple_proto::Event::PacketReceived(_) => todo!(),
-            simple_proto::Event::Timeout => panic!("Can't receive timeout as initial event"),
+            Event::PacketReceived(p) => match p {
+                tftp::Packet::Rrq {
+                    filename,
+                    mode,
+                    options,
+                } => todo!(),
+                tftp::Packet::Wrq { .. } => Ok((
+                    Self::Dead,
+                    error_response(
+                        2, /* Access violation */
+                        "This server only supports reading files",
+                    ),
+                )),
+                packet => Ok((
+                    Self::Dead,
+                    error_response(0 /* TODO */, "Initial request is not Rrq or Wrq"),
+                )),
+            },
+            Event::Timeout => panic!("Can't receive timeout as initial event"),
         }
     }
 }
@@ -58,9 +81,18 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
         &mut self,
         event: Event<Self::Packet>,
     ) -> Result<simple_proto::Response<Self::Packet>, Self::Error> {
-        match self.state {
-            State::WaitingForInitialPacket => self.handle_initial_event(event),
-        }
+        let (new_self, response) = match self {
+            Self::Dead => panic!(
+                "Should not receive events on a dead connection: {:?}",
+                event
+            ),
+            Self::WaitingForInitialPacket { filesystem } => {
+                Self::handle_initial_event(filesystem, event)?
+            }
+        };
+
+        *self = new_self;
+        Ok(response)
     }
 }
 

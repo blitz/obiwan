@@ -80,8 +80,11 @@ impl File for Vec<u8> {
 }
 
 #[cfg(test)]
+pub type MapFilesystem = std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>;
+
+#[cfg(test)]
 #[async_trait]
-impl Filesystem for std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+impl Filesystem for MapFilesystem {
     type File = Vec<u8>;
     type Error = ();
 

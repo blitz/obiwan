@@ -4,8 +4,9 @@
 //! The abstraction aims to make unit testing for simple UDP protocols
 //! easy.
 
-use std::time::Duration;
+use std::{fmt::Debug, time::Duration};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
     // The connection is terminated.
     Terminated,
@@ -15,7 +16,8 @@ pub enum ConnectionStatus {
     WaitingForPacket(Duration),
 }
 
-pub enum Event<T> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event<T: Debug + Clone + PartialEq + Eq> {
     // The given packet was received on this connection.
     PacketReceived(T),
 
@@ -23,13 +25,14 @@ pub enum Event<T> {
     Timeout,
 }
 
-pub struct Response<T> {
-    packet: Option<T>,
-    next_status: ConnectionStatus,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Response<T: Debug + Clone + PartialEq + Eq> {
+    pub packet: Option<T>,
+    pub next_status: ConnectionStatus,
 }
 
 pub trait SimpleUdpProtocol {
-    type Packet;
+    type Packet: Debug + Clone + PartialEq + Eq;
     type Error;
 
     fn handle_event(

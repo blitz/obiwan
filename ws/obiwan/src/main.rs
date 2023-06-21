@@ -1,6 +1,6 @@
 mod path;
-mod simple_proto;
 mod simple_fs;
+mod simple_proto;
 mod tftp;
 mod tftp_proto;
 

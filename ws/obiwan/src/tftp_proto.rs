@@ -1,27 +1,34 @@
 //! This module implements the TFTP protocol in terms of [`simple_proto`].
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use crate::{
-    simple_fs,
+    simple_fs::{self, File},
     simple_proto::{self, ConnectionStatus, Event, Response},
     tftp,
 };
 
 use anyhow::Result;
+use async_trait::async_trait;
 
 const DEFAULT_TFTP_TIMEOUT: Duration = Duration::from_secs(1);
-
-#[derive(Debug, Clone, Copy)]
-enum State {
-    WaitingForInitialPacket,
-}
+const DEFAULT_TFTP_BLKSIZE: usize = 512;
 
 /// The current state of the TFTP connection.
 #[derive(Debug)]
 pub enum Connection<FS: simple_fs::Filesystem> {
     Dead,
-    WaitingForInitialPacket { filesystem: FS },
+    WaitingForInitialPacket {
+        filesystem: FS,
+    },
+    ReadingFile {
+        file: FS::File,
+
+        /// The last block we acked. Note that this is not `u16` as
+        /// the block number in TFTP packets, because otherwise we
+        /// would be limited to small packet sizes.
+        last_acked_block: u64,
+    },
 }
 
 fn error_response(error_code: u16, error_msg: &str) -> Response<tftp::Packet> {
@@ -39,7 +46,44 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         Self::WaitingForInitialPacket { filesystem }
     }
 
-    fn handle_initial_event(
+    async fn read_block(file: &mut FS::File, block: u64) -> Result<Vec<u8>> {
+        let mut buf = [0_u8; DEFAULT_TFTP_BLKSIZE];
+        let size = file
+            .read((block - 1) * u64::try_from(DEFAULT_TFTP_BLKSIZE)?, &mut buf)
+            .await?;
+
+        Ok(buf[0..size].to_vec())
+    }
+
+    async fn handle_initial_read(
+        filesystem: &mut FS,
+        path: &Path,
+    ) -> Result<(Self, Response<tftp::Packet>)> {
+        match filesystem.open(path).await {
+            Ok(mut file) => {
+                let data = Self::read_block(&mut file, 1).await?;
+                Ok((
+                    Self::ReadingFile {
+                        file,
+                        last_acked_block: 0,
+                    },
+                    Response {
+                        packet: Some(tftp::Packet::Data { block: 1, data }),
+                        next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT),
+                    },
+                ))
+            }
+            Err(err) => Ok((
+                Self::Dead,
+                error_response(
+                    0, /* TODO File not found */
+                    &format!("Failed to open file: {err}"),
+                ),
+            )),
+        }
+    }
+
+    async fn handle_initial_event(
         filesystem: &mut FS,
         event: Event<tftp::Packet>,
     ) -> Result<(Self, Response<tftp::Packet>)> {
@@ -47,9 +91,9 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
             Event::PacketReceived(p) => match p {
                 tftp::Packet::Rrq {
                     filename,
-                    mode,
-                    options,
-                } => todo!(),
+                    mode: _,
+                    options: _,
+                } => Self::handle_initial_read(filesystem, &filename).await,
                 tftp::Packet::Wrq { .. } => Ok((
                     Self::Dead,
                     error_response(
@@ -57,13 +101,20 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                         "This server only supports reading files",
                     ),
                 )),
-                packet => Ok((
+                _ => Ok((
                     Self::Dead,
                     error_response(0 /* TODO */, "Initial request is not Rrq or Wrq"),
                 )),
             },
             Event::Timeout => panic!("Can't receive timeout as initial event"),
         }
+    }
+
+    async fn handle_reading_file_event(
+        _file: &mut FS::File,
+        _last_acked_block: u64,
+    ) -> Result<(Self, Response<tftp::Packet>)> {
+        todo!()
     }
 }
 
@@ -73,11 +124,12 @@ impl Connection<simple_fs::AsyncFilesystem> {
     }
 }
 
+#[async_trait]
 impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<FS> {
     type Packet = tftp::Packet;
     type Error = anyhow::Error;
 
-    fn handle_event(
+    async fn handle_event(
         &mut self,
         event: Event<Self::Packet>,
     ) -> Result<simple_proto::Response<Self::Packet>, Self::Error> {
@@ -87,8 +139,12 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
                 event
             ),
             Self::WaitingForInitialPacket { filesystem } => {
-                Self::handle_initial_event(filesystem, event)?
+                Self::handle_initial_event(filesystem, event).await?
             }
+            Self::ReadingFile {
+                file,
+                last_acked_block,
+            } => Self::handle_reading_file_event(file, *last_acked_block).await?,
         };
 
         *self = new_self;
@@ -104,10 +160,18 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn simple_read() {
-        let fs =
-            simple_fs::MapFilesystem::from([(PathBuf::from_str("/foo").unwrap(), vec![1, 2, 3])]);
+    #[tokio::test]
+    async fn simple_read() {
+        let mut file_contents = [0xab_u8; 513].to_vec();
+
+        // Make the contents more interesting.
+        file_contents[2] = 0x12;
+        file_contents[512] = 0x23;
+
+        let fs = simple_fs::MapFilesystem::from([(
+            PathBuf::from_str("/foo").unwrap(),
+            file_contents.clone(),
+        )]);
         let mut con = Connection::new_with_filesystem(fs);
 
         assert_eq!(
@@ -116,9 +180,26 @@ mod tests {
                 mode: tftp::RequestMode::Octet,
                 options: vec![]
             }))
+            .await
             .unwrap(),
             Response {
-                packet: Some(tftp::Packet::Ack { block: 0 }),
+                packet: Some(tftp::Packet::Data {
+                    block: 1,
+                    data: file_contents[0..512].to_vec()
+                }),
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT)
+            }
+        );
+
+        assert_eq!(
+            con.handle_event(Event::PacketReceived(tftp::Packet::Ack { block: 1 }))
+                .await
+                .unwrap(),
+            Response {
+                packet: Some(tftp::Packet::Data {
+                    block: 2,
+                    data: file_contents[512..].to_vec()
+                }),
                 next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT)
             }
         );

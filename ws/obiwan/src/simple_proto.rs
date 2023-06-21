@@ -6,6 +6,8 @@
 
 use std::{fmt::Debug, time::Duration};
 
+use async_trait::async_trait;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
     // The connection is terminated.
@@ -31,11 +33,12 @@ pub struct Response<T: Debug + Clone + PartialEq + Eq> {
     pub next_status: ConnectionStatus,
 }
 
+#[async_trait]
 pub trait SimpleUdpProtocol {
     type Packet: Debug + Clone + PartialEq + Eq;
     type Error;
 
-    fn handle_event(
+    async fn handle_event(
         &mut self,
         event: Event<Self::Packet>,
     ) -> Result<Response<Self::Packet>, Self::Error>;

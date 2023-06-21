@@ -2,14 +2,18 @@
 //! degree that the TFTP protocol will need. It's main purpose is to
 //! facilitate unit testing.
 
-use std::{fmt::Debug, io::SeekFrom, path::Path};
+use std::{
+    fmt::Debug,
+    io::{ErrorKind, SeekFrom},
+    path::Path,
+};
 
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 #[async_trait]
-pub trait File: Debug {
-    type Error;
+pub trait File: Debug + Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
 
     /// Reads as many bytes as possible into `buf`. Returns the number
     /// of bytes read. If less bytes are read than `buf` has space, the
@@ -18,9 +22,9 @@ pub trait File: Debug {
 }
 
 #[async_trait]
-pub trait Filesystem: Debug {
+pub trait Filesystem: Debug + Send + Sync {
     type File: File;
-    type Error;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     /// Open a file for reading.
     async fn open(&self, path: &Path) -> Result<Self::File, Self::Error>;
@@ -64,14 +68,19 @@ impl Filesystem for AsyncFilesystem {
 #[cfg(test)]
 #[async_trait]
 impl File for Vec<u8> {
-    type Error = ();
+    type Error = std::io::Error;
 
     async fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        if offset >= u64::try_from(self.len()).map_err(|_| ())? {
+        if offset
+            >= u64::try_from(self.len())
+                .map_err(|_| ())
+                .map_err(|_| Self::Error::new(ErrorKind::Other, "Conversion error"))?
+        {
             return Ok(0);
         }
 
-        let offset = usize::try_from(offset).map_err(|_| ())?;
+        let offset = usize::try_from(offset)
+            .map_err(|_| Self::Error::new(ErrorKind::Other, "Conversion error"))?;
         let len = buf.len().min(self.len() - offset);
 
         buf[..len].copy_from_slice(&self[offset..(offset + len)]);
@@ -86,10 +95,12 @@ pub type MapFilesystem = std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>
 #[async_trait]
 impl Filesystem for MapFilesystem {
     type File = Vec<u8>;
-    type Error = ();
+    type Error = std::io::Error;
 
     async fn open(&self, path: &Path) -> Result<Self::File, Self::Error> {
-        self.get(path).ok_or(()).cloned()
+        self.get(path)
+            .ok_or(std::io::Error::from_raw_os_error(22))
+            .cloned()
     }
 }
 
@@ -111,12 +122,12 @@ mod tests {
 
         let mut buf = [0; 64];
 
-        assert_eq!(file.read(300, &mut buf).await, Ok(0)); // EOF
+        assert_eq!(file.read(300, &mut buf).await.unwrap(), 0); // EOF
 
-        assert_eq!(file.read(0, &mut buf).await, Ok(4));
+        assert_eq!(file.read(0, &mut buf).await.unwrap(), 4);
         assert_eq!(&buf[0..4], &[1, 2, 3, 4]);
 
-        assert_eq!(file.read(3, &mut buf).await, Ok(1));
+        assert_eq!(file.read(3, &mut buf).await.unwrap(), 1);
         assert_eq!(&buf[0..1], &[4]);
     }
 }

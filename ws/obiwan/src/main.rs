@@ -5,7 +5,6 @@ mod tftp;
 mod tftp_proto;
 
 use std::{
-    io::SeekFrom,
     net::SocketAddr,
     path::{Path, PathBuf},
     time::Duration,
@@ -14,20 +13,12 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::{debug, error, info, trace, warn};
-use path::normalize;
-use tokio::{
-    io::{AsyncReadExt, AsyncSeekExt},
-    runtime::Handle,
+use tokio::{runtime::Handle, time::timeout};
+
+use crate::{
+    simple_proto::{ConnectionStatus, Event, SimpleUdpProtocol},
+    tftp_proto::Connection,
 };
-
-const SESSION_TIMEOUT: Duration = Duration::from_secs(5);
-
-// The default block size of a TFTP connection.
-const DEFAULT_BLKSIZE: usize = 512;
-
-// How many times we retry sending packets if the other side doesn't
-// respond in time.
-const MAX_RETRIES: u32 = 5;
 
 /// A simple TFTP server for PXE booting
 #[derive(Parser, Debug)]
@@ -114,138 +105,18 @@ async fn send_packet(socket: &tokio::net::UdpSocket, packet: tftp::Packet) -> Re
     Ok(())
 }
 
-async fn send_error(
+async fn recv_packet(
     socket: &tokio::net::UdpSocket,
-    error_code: u16,
-    error_msg: &str,
-) -> Result<()> {
-    send_packet(
-        socket,
-        tftp::Packet::Error {
-            error_code,
-            error_msg: error_msg.to_owned(),
-        },
-    )
-    .await
-}
+    recv_timeout: Duration,
+) -> Result<Option<tftp::Packet>> {
+    let mut buf = vec![0u8; 1 << 16];
 
-async fn send_data(socket: &tokio::net::UdpSocket, block: u16, data: &[u8]) -> Result<()> {
-    send_packet(
-        socket,
-        tftp::Packet::Data {
-            block,
-            data: data.to_owned(),
-        },
-    )
-    .await
-}
-
-async fn send_file(socket: tokio::net::UdpSocket, mut file: tokio::fs::File) -> Result<()> {
-    let mut buf: [u8; DEFAULT_BLKSIZE] = [0; DEFAULT_BLKSIZE];
-
-    // TODO We need to handle the case where the file has more blocks than we can represent in u16:
-    //
-    // https://opendev.org/starlingx/integ/commit/572cd24c4971c713f5fe06df55a8d78c3553c4ed
-
-    let blksize: u64 = DEFAULT_BLKSIZE.try_into().unwrap();
-
-    // If the file has a size that is a multiple of the block size, we
-    // actually want to send one empty packet.
-    //
-    // TODO We need a test case for this.
-    let mut cur_block: u16 = 1;
-    let mut retry_count = 0;
-
-    loop {
-        if retry_count > MAX_RETRIES {
-            warn!("Client didn't respond after multiple retries. Abandoning connection.");
-            return Ok(());
-        }
-
-        // Block number and maximal block size are 16-bit, so the overflow
-        // should never happen. But in case we mess up the packet parsing
-        // of these potentially malicious values, it's better to be
-        // defensive.
-
-        assert!(cur_block > 0);
-        file.seek(SeekFrom::Start(
-            u64::from(cur_block - 1) // Block numbers start at 1
-                .checked_mul(u64::try_from(DEFAULT_BLKSIZE).unwrap())
-                .ok_or_else(|| anyhow!("Integer overflow."))?,
-        ))
-        .await?;
-
-        let len = file.read(&mut buf).await?;
-        trace!("Read {len} bytes from file as block {cur_block}");
-        let buf = &buf[0..len];
-
-        send_data(&socket, cur_block, buf).await?;
-
-        match tokio::time::timeout(SESSION_TIMEOUT, async {
-            let mut buf = vec![0u8; 1 << 16];
-            let len = socket.recv(&mut buf).await?;
-
-            tftp::Packet::try_from(&buf[0..len]).context("Failed to parse incoming packet")
-        })
-        .await
-        {
-            Ok(recv_result) => match recv_result? {
-                tftp::Packet::Ack { block } if block == cur_block => {
-                    trace!("Client acknowledged block {block}");
-                    cur_block = block + 1;
-                }
-                tftp::Packet::Error {
-                    error_code,
-                    error_msg,
-                } => {
-                    warn!("Client sent an error ({error_code}): {}", error_msg);
-                    return Ok(());
-                }
-                other => {
-                    warn!("Client sent an unexpected packet: {:?}", other);
-                    return Ok(());
-                }
-            },
-            Err(_) => {
-                // Timeout, we want to retry.
-                retry_count += 1;
-                continue;
-            }
-        }
-
-        retry_count = 0;
-
-        if len != usize::try_from(blksize).unwrap() {
-            debug!(
-                "Successfully sent {cur_block} block{}",
-                if cur_block == 1 { "" } else { "s" }
-            );
-
-            break;
-        }
+    match timeout(recv_timeout, socket.recv(&mut buf)).await {
+        Ok(res) => Some(res?),
+        Err(_) => None,
     }
-
-    Ok(())
-}
-
-async fn handle_read(socket: tokio::net::UdpSocket, root: &Path, path: &Path) -> Result<()> {
-    match tokio::fs::File::open(root.join(
-        normalize(path).ok_or_else(|| anyhow!("Failed to normalize path: {}", path.display()))?,
-    ))
-    .await
-    {
-        Ok(file) if file.metadata().await?.is_file() => send_file(socket, file).await,
-        Ok(_) => {
-            send_error(&socket, 0, "Can't open a directory").await?;
-
-            Ok(())
-        }
-        Err(e) => {
-            send_error(&socket, 0, &e.to_string()).await?;
-
-            Ok(())
-        }
-    }
+    .map(|len| tftp::Packet::try_from(&buf[0..len]).context("Failed to parse incoming packet"))
+    .transpose()
 }
 
 async fn handle_connection(
@@ -262,45 +133,30 @@ async fn handle_connection(
 
     socket.connect(remote_addr).await?;
 
-    match initial_request {
-        tftp::Packet::Rrq {
-            filename,
-            mode: _,
-            options: _,
-        } => handle_read(socket, root, &filename).await?,
-        tftp::Packet::Wrq {
-            filename,
-            mode,
-            options: _,
-        } => {
-            warn!(
-                "{remote_addr}: Write {} in {:?} mode denied. This server only supports reading.",
-                filename.display(),
-                mode
-            );
+    let mut con = Connection::new(root);
+    let mut packet = Some(initial_request);
 
-            send_packet(
-                &socket,
-                tftp::Packet::Error {
-                    error_code: 2, // TODO Access violation
-                    error_msg: "This server only supports reading files".to_owned(),
-                },
-            )
+    loop {
+        let response = con
+            .handle_event(match packet {
+                Some(p) => Event::PacketReceived(p),
+                None => Event::Timeout,
+            })
             .await?;
+
+        if let Some(p) = response.packet {
+            send_packet(&socket, p).await?;
         }
 
-        request => {
-            warn!("{remote_addr}: Invalid initial request: {request:?}");
-
-            send_error(
-                &socket,
-                4, // TODO Illegal operation
-                "Only read or write requests can start connections",
-            )
-            .await?;
+        match response.next_status {
+            ConnectionStatus::Terminated => break,
+            ConnectionStatus::WaitingForPacket(timeout) => {
+                packet = recv_packet(&socket, timeout).await?;
+            }
         }
     }
 
+    debug!("{remote_addr}: Connection terminated.");
     Ok(())
 }
 
@@ -317,6 +173,7 @@ async fn server_main(runtime: &Handle, socket: tokio::net::UdpSocket, root: &Pat
         match tftp::Packet::try_from(&buf[0..len]) {
             Ok(packet) => {
                 let root = root.to_owned();
+
                 runtime.spawn(async move {
                     if let Err(e) = handle_connection(local_addr, remote_addr, &root, packet).await
                     {

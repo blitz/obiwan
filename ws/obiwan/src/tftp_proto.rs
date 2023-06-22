@@ -10,7 +10,7 @@ use crate::{
 
 use anyhow::Result;
 use async_trait::async_trait;
-use log::warn;
+use log::{debug, warn};
 
 const DEFAULT_TFTP_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_TFTP_BLKSIZE: usize = 512;
@@ -35,6 +35,9 @@ pub enum Connection<FS: simple_fs::Filesystem> {
 
         /// How many timeout events have we received for the current block.
         timeout_events: u32,
+
+        /// We are waiting for the last ACK.
+        last_was_final: bool,
     },
 }
 
@@ -79,12 +82,14 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         assert!(block > 0);
 
         let data = Self::read_block(&mut file, block).await?;
+        assert!(data.len() <= DEFAULT_TFTP_BLKSIZE);
 
         Ok((
             Self::ReadingFile {
                 file,
                 last_acked_block: block - 1,
                 timeout_events: timeouts,
+                last_was_final: data.len() < DEFAULT_TFTP_BLKSIZE,
             },
             Response {
                 packet: Some(tftp::Packet::Data {
@@ -143,6 +148,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         file: FS::File,
         mut last_acked_block: u64,
         mut timeouts: u32,
+        last_was_final: bool,
         event: Event<tftp::Packet>,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         match event {
@@ -150,6 +156,11 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                 tftp::Packet::Ack { block } => {
                     if u64::from(block) == (last_acked_block + 1) & 0xffff {
                         last_acked_block = last_acked_block + 1;
+
+                        if last_was_final {
+                            debug!("Successfully sent {last_acked_block} blocks.");
+                            return Ok((Self::Dead, no_response()));
+                        }
                     } else {
                         return Ok((
                             Self::Dead,
@@ -212,11 +223,13 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
                 file,
                 last_acked_block,
                 timeout_events,
+                last_was_final,
             } => {
                 Self::handle_reading_file_event(
                     file.try_clone().await?,
                     *last_acked_block,
                     *timeout_events,
+                    *last_was_final,
                     event,
                 )
                 .await?

@@ -12,17 +12,20 @@ use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 #[async_trait]
-pub trait File: Debug + Send + Sync {
+pub trait File: Debug + Send + Sync + Sized {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Reads as many bytes as possible into `buf`. Returns the number
     /// of bytes read. If less bytes are read than `buf` has space, the
     /// file has ended.
     async fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Error>;
+
+    /// Attempts to clone the file.
+    async fn try_clone(&self) -> Result<Self, Self::Error>;
 }
 
 #[async_trait]
-pub trait Filesystem: Debug + Send + Sync {
+pub trait Filesystem: Debug + Send + Sync + Clone {
     type File: File;
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -49,6 +52,10 @@ impl File for tokio::fs::File {
         }
 
         Ok(offset)
+    }
+
+    async fn try_clone(&self) -> Result<Self, Self::Error> {
+        tokio::fs::File::try_clone(self).await
     }
 }
 
@@ -85,6 +92,10 @@ impl File for Vec<u8> {
 
         buf[..len].copy_from_slice(&self[offset..(offset + len)]);
         Ok(len)
+    }
+
+    async fn try_clone(&self) -> Result<Self, Self::Error> {
+        Ok(self.clone())
     }
 }
 

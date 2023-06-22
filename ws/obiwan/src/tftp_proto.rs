@@ -10,9 +10,13 @@ use crate::{
 
 use anyhow::Result;
 use async_trait::async_trait;
+use log::warn;
 
 const DEFAULT_TFTP_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_TFTP_BLKSIZE: usize = 512;
+
+/// How many times do we resend packets, if we don't get a response.
+const MAX_RETRANSMISSIONS: u32 = 5;
 
 /// The current state of the TFTP connection.
 #[derive(Debug)]
@@ -28,15 +32,27 @@ pub enum Connection<FS: simple_fs::Filesystem> {
         /// the block number in TFTP packets, because otherwise we
         /// would be limited to small packet sizes.
         last_acked_block: u64,
+
+        /// How many timeout events have we received for the current block.
+        timeout_events: u32,
     },
 }
 
 fn error_response(error_code: u16, error_msg: &str) -> Response<tftp::Packet> {
+    warn!("Sending error to client: {error_code} {error_msg}");
+
     Response {
         packet: Some(tftp::Packet::Error {
             error_code,
             error_msg: error_msg.to_owned(),
         }),
+        next_status: ConnectionStatus::Terminated,
+    }
+}
+
+fn no_response() -> Response<tftp::Packet> {
+    Response {
+        packet: None,
         next_status: ConnectionStatus::Terminated,
     }
 }
@@ -55,24 +71,37 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         Ok(buf[0..size].to_vec())
     }
 
+    async fn send_block(
+        mut file: FS::File,
+        block: u64,
+        timeouts: u32,
+    ) -> Result<(Self, Response<tftp::Packet>)> {
+        assert!(block > 0);
+
+        let data = Self::read_block(&mut file, block).await?;
+
+        Ok((
+            Self::ReadingFile {
+                file,
+                last_acked_block: block - 1,
+                timeout_events: timeouts,
+            },
+            Response {
+                packet: Some(tftp::Packet::Data {
+                    block: u16::try_from(block & 0xffff).unwrap(),
+                    data,
+                }),
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT),
+            },
+        ))
+    }
+
     async fn handle_initial_read(
-        filesystem: &mut FS,
+        filesystem: FS,
         path: &Path,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         match filesystem.open(path).await {
-            Ok(mut file) => {
-                let data = Self::read_block(&mut file, 1).await?;
-                Ok((
-                    Self::ReadingFile {
-                        file,
-                        last_acked_block: 0,
-                    },
-                    Response {
-                        packet: Some(tftp::Packet::Data { block: 1, data }),
-                        next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT),
-                    },
-                ))
-            }
+            Ok(file) => Self::send_block(file, 1, 0).await,
             Err(err) => Ok((
                 Self::Dead,
                 error_response(
@@ -84,7 +113,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
     }
 
     async fn handle_initial_event(
-        filesystem: &mut FS,
+        filesystem: FS,
         event: Event<tftp::Packet>,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         match event {
@@ -111,10 +140,48 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
     }
 
     async fn handle_reading_file_event(
-        _file: &mut FS::File,
-        _last_acked_block: u64,
+        file: FS::File,
+        mut last_acked_block: u64,
+        mut timeouts: u32,
+        event: Event<tftp::Packet>,
     ) -> Result<(Self, Response<tftp::Packet>)> {
-        todo!()
+        match event {
+            Event::PacketReceived(packet) => match packet {
+                tftp::Packet::Ack { block } => {
+                    if u64::from(block) == (last_acked_block + 1) & 0xffff {
+                        last_acked_block = last_acked_block + 1;
+                    } else {
+                        return Ok((
+                            Self::Dead,
+                            error_response(0, "Unexpected ACK for block {block}"),
+                        ));
+                    }
+                }
+                tftp::Packet::Error {
+                    error_code,
+                    error_msg,
+                } => {
+                    warn!("Client sent error: {error_code} {error_msg}");
+                    return Ok((Self::Dead, no_response()));
+                }
+                _ => {
+                    return Ok((
+                        Self::Dead,
+                        error_response(0, "Received unexpected packet. Closing connection."),
+                    ));
+                }
+            },
+            Event::Timeout => {
+                timeouts += 1;
+
+                if timeouts > MAX_RETRANSMISSIONS {
+                    warn!("Client timed out sending ACKs.");
+                    return Ok((Self::Dead, no_response()));
+                }
+            }
+        }
+
+        Self::send_block(file, last_acked_block + 1, timeouts).await
     }
 }
 
@@ -139,12 +206,21 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
                 event
             ),
             Self::WaitingForInitialPacket { filesystem } => {
-                Self::handle_initial_event(filesystem, event).await?
+                Self::handle_initial_event(filesystem.clone(), event).await?
             }
             Self::ReadingFile {
                 file,
                 last_acked_block,
-            } => Self::handle_reading_file_event(file, *last_acked_block).await?,
+                timeout_events,
+            } => {
+                Self::handle_reading_file_event(
+                    file.try_clone().await?,
+                    *last_acked_block,
+                    *timeout_events,
+                    event,
+                )
+                .await?
+            }
         };
 
         *self = new_self;

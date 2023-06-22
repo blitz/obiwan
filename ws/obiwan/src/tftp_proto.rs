@@ -173,7 +173,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
             Event::PacketReceived(packet) => match packet {
                 tftp::Packet::Ack { block } => {
                     if u64::from(block) == (last_acked_block + 1) & 0xffff {
-                        last_acked_block = last_acked_block + 1;
+                        last_acked_block += 1;
 
                         if last_was_final {
                             debug!("Successfully sent {last_acked_block} blocks.");
@@ -235,7 +235,7 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
                 event
             ),
             Self::WaitingForInitialPacket { filesystem, root } => {
-                Self::handle_initial_event(filesystem.clone(), &root, event).await?
+                Self::handle_initial_event(filesystem.clone(), root, event).await?
             }
             Self::ReadingFile {
                 file,

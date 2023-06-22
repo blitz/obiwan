@@ -2,11 +2,7 @@
 //! degree that the TFTP protocol will need. It's main purpose is to
 //! facilitate unit testing.
 
-use std::{
-    fmt::Debug,
-    io::{ErrorKind, SeekFrom},
-    path::Path,
-};
+use std::{fmt::Debug, io::SeekFrom, path::Path};
 
 use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -78,6 +74,8 @@ impl File for Vec<u8> {
     type Error = std::io::Error;
 
     async fn read(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        use std::io::ErrorKind;
+
         if offset
             >= u64::try_from(self.len())
                 .map_err(|_| ())

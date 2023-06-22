@@ -1,14 +1,18 @@
 //! This module implements the TFTP protocol in terms of [`simple_proto`].
 
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use crate::{
+    path::normalize,
     simple_fs::{self, File},
     simple_proto::{self, ConnectionStatus, Event, Response},
     tftp,
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::{debug, warn};
 
@@ -24,6 +28,7 @@ pub enum Connection<FS: simple_fs::Filesystem> {
     Dead,
     WaitingForInitialPacket {
         filesystem: FS,
+        root: PathBuf,
     },
     ReadingFile {
         file: FS::File,
@@ -61,8 +66,11 @@ fn no_response() -> Response<tftp::Packet> {
 }
 
 impl<FS: simple_fs::Filesystem> Connection<FS> {
-    pub fn new_with_filesystem(filesystem: FS) -> Self {
-        Self::WaitingForInitialPacket { filesystem }
+    pub fn new_with_filesystem(filesystem: FS, root: impl AsRef<Path>) -> Self {
+        Self::WaitingForInitialPacket {
+            filesystem,
+            root: root.as_ref().to_path_buf(),
+        }
     }
 
     async fn read_block(file: &mut FS::File, block: u64) -> Result<Vec<u8>> {
@@ -103,9 +111,18 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 
     async fn handle_initial_read(
         filesystem: FS,
+        root: &Path,
         path: &Path,
     ) -> Result<(Self, Response<tftp::Packet>)> {
-        match filesystem.open(path).await {
+        match filesystem
+            .open(
+                &root.join(
+                    normalize(path)
+                        .ok_or_else(|| anyhow!("Failed to normalize path: {}", path.display()))?,
+                ),
+            )
+            .await
+        {
             Ok(file) => Self::send_block(file, 1, 0).await,
             Err(err) => Ok((
                 Self::Dead,
@@ -119,6 +136,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 
     async fn handle_initial_event(
         filesystem: FS,
+        root: &Path,
         event: Event<tftp::Packet>,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         match event {
@@ -127,7 +145,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                     filename,
                     mode: _,
                     options: _,
-                } => Self::handle_initial_read(filesystem, &filename).await,
+                } => Self::handle_initial_read(filesystem, root, &filename).await,
                 tftp::Packet::Wrq { .. } => Ok((
                     Self::Dead,
                     error_response(
@@ -197,8 +215,8 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 }
 
 impl Connection<simple_fs::AsyncFilesystem> {
-    pub fn new() -> Self {
-        Self::new_with_filesystem(simple_fs::AsyncFilesystem::default())
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        Self::new_with_filesystem(simple_fs::AsyncFilesystem::default(), root)
     }
 }
 
@@ -216,8 +234,8 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
                 "Should not receive events on a dead connection: {:?}",
                 event
             ),
-            Self::WaitingForInitialPacket { filesystem } => {
-                Self::handle_initial_event(filesystem.clone(), event).await?
+            Self::WaitingForInitialPacket { filesystem, root } => {
+                Self::handle_initial_event(filesystem.clone(), &root, event).await?
             }
             Self::ReadingFile {
                 file,
@@ -261,7 +279,7 @@ mod tests {
             PathBuf::from_str("/foo").unwrap(),
             file_contents.clone(),
         )]);
-        let mut con = Connection::new_with_filesystem(fs);
+        let mut con = Connection::new_with_filesystem(fs, "/");
 
         assert_eq!(
             con.handle_event(Event::PacketReceived(tftp::Packet::Rrq {

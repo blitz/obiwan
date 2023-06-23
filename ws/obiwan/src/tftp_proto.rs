@@ -244,7 +244,7 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
                 last_was_final,
             } => {
                 Self::handle_reading_file_event(
-                    file.try_clone().await?,
+                    file.clone(),
                     *last_acked_block,
                     *timeout_events,
                     *last_was_final,

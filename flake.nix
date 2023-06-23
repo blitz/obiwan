@@ -90,7 +90,7 @@
 
           # Build the actual crate itself, reusing the dependency
           # artifacts from above.
-          my-crate = craneLib.buildPackage (commonArgs // {
+          obiwan = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
           });
         in
@@ -105,7 +105,7 @@
             module = self.nixosModules.default;
           }) // {
             # Build the crate as part of `nix flake check` for convenience
-            inherit my-crate;
+            inherit obiwan;
 
             # Run clippy (and deny all warnings) on the crate source,
             # again, resuing the dependency artifacts from above.
@@ -113,22 +113,19 @@
             # Note that this is done as a separate derivation so that
             # we can block the CI if there are issues here, but not
             # prevent downstream consumers from building our crate by itself.
-            my-crate-clippy = craneLib.cargoClippy (commonArgs // {
+            obiwan-clippy = craneLib.cargoClippy (commonArgs // {
               inherit cargoArtifacts;
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
             });
 
             # Audit dependencies
-            my-crate-audit = craneLib.cargoAudit {
+            obiwan-audit = craneLib.cargoAudit {
               inherit src advisory-db;
             };
           };
 
           packages = {
-            default = my-crate;
-            my-crate-llvm-coverage = craneLibLLvmTools.cargoLlvmCov (commonArgs // {
-              inherit cargoArtifacts;
-            });
+            default = obiwan;
           };
 
           devShells.default = pkgs.mkShell {

@@ -53,17 +53,18 @@
     };
 
     testScript = ''
-      start_all()
-
-      server.wait_for_unit("network-online.target")
-      client.wait_for_unit("network-online.target")
-
+      server.start()
+      server.wait_for_unit("network-online.target", timeout = 120)
       server.wait_for_unit("obiwan.service")
 
-      client.succeed("echo get smallfile | tftp server")
+      client.start()
+      client.wait_for_unit("network-online.target", timeout = 120)
+
+      client.succeed("echo get smallfile | tftp server", timeout = 120)
+
+      client.succeed("echo get largefile | tftp server", timeout = 120)
 
       # TODO Check whether file is intact.
-      # TODO Download large file.
 
       # TODO Check it again with pkgs.atftpd
     '';

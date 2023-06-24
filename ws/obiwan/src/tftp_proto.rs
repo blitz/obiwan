@@ -173,7 +173,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         match event {
             Event::PacketReceived(packet) => match packet {
                 tftp::Packet::Ack { block } => {
-                    debug!("Client acknowledged block {block}.");
+                    debug!("Client acknowledged block {block:#x}.");
                     if u64::from(block) == (last_acked_block + 1) & 0xffff {
                         last_acked_block += 1;
 
@@ -182,10 +182,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                             return Ok((Self::Dead, no_response()));
                         }
                     } else {
-                        return Ok((
-                            Self::Dead,
-                            error_response(0, "Unexpected ACK for block {block}"),
-                        ));
+                        debug!("Unexpected ACK. Ignoring.");
                     }
                 }
                 tftp::Packet::Error {
@@ -210,14 +207,14 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                     return Ok((Self::Dead, no_response()));
                 } else {
                     debug!(
-                        "Timeout waiting for ACK for block {}, resending...",
+                        "Timeout waiting for ACK for block {:x}, resending...",
                         last_acked_block + 1
                     );
                 }
             }
         }
 
-        debug!("Sending block {}.", last_acked_block + 1);
+        debug!("Sending block {:x}.", last_acked_block + 1);
         Self::send_block(file, last_acked_block + 1, timeouts).await
     }
 }

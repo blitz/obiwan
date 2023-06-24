@@ -20,7 +20,7 @@
               # needlessly rebuild it when the dependencies change.
               outputHashMode = "recursive";
               outputHashAlgo = "sha256";
-              outputHash = "U26n8vF8NGrWvIW6lRkrceu6f+wxlkAy7HpOKUmyfDA=";
+              outputHash = "hCGMglO04jUrrXm8oH0klSpHZgK20WJI44UDerkquDY=";
             } ''
             mkdir -p $out
 
@@ -30,6 +30,8 @@
             # We need a file that is larger than the typical block size (~1500 bytes) and has more blocks
             # than fits in 2^16.
             head -c 150M /dev/zero | openssl enc -pbkdf2 -aes-128-ctr -nosalt -pass pass:12345 > $out/largefile
+
+            ( cd $out ; sha256sum smallfile largefile > SHA256SUMS )
           '';
         in
         {
@@ -51,6 +53,7 @@
 
       environment.systemPackages = [
         pkgs.inetutils # tftp
+        pkgs.atftp
       ];
     };
 
@@ -62,11 +65,12 @@
       client.start()
       client.wait_for_unit("network-online.target", timeout = 120)
 
+      client.succeed("echo get SHA256SUMS | tftp server", timeout = 120)
       client.succeed("echo get smallfile | tftp server", timeout = 120)
-
       client.succeed("echo get largefile | tftp server", timeout = 120)
+      print(client.succeed("pwd ; ls -lh ."))
+      print(client.succeed("sha256sum --check SHA256SUMS"))
 
-      # TODO Check whether file is intact.
       # TODO Check it again with pkgs.atftpd
     '';
   };

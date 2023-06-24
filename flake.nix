@@ -59,7 +59,7 @@
         }
       );
 
-      perSystem = { config, system, pkgs, ... }:
+      perSystem = { config, system, pkgs, lib, ... }:
         let
           craneLib = crane.lib.${system};
           src = craneLib.cleanCargoSource (craneLib.path ./ws);
@@ -87,10 +87,13 @@
             typos.enable = true;
           };
 
-          checks = (import ./nix/tests.nix {
-            inherit pkgs;
-            module = self.nixosModules.default;
-          }) // {
+          # Only run integration tests on x86. The aarch64 runners
+          # don't have KVM and the tests take too long.
+          checks = lib.optionalAttrs (system == "x86_64-linux")
+            (import ./nix/tests.nix {
+              inherit pkgs;
+              module = self.nixosModules.default;
+            }) // {
             # Build the crate as part of `nix flake check` for convenience
             inherit obiwan;
 

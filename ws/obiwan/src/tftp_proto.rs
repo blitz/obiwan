@@ -84,6 +84,26 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         Ok(buf[0..size].to_vec())
     }
 
+    async fn ignore_packet(
+        file: FS::File,
+        block: u64,
+        timeouts: u32,
+        last_was_final: bool,
+    ) -> Result<(Self, Response<tftp::Packet>)> {
+        Ok((
+            Self::ReadingFile {
+                file,
+                last_acked_block: block - 1,
+                timeout_events: timeouts,
+                last_was_final,
+            },
+            Response {
+                packet: None,
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT),
+            },
+        ))
+    }
+
     async fn send_block(
         mut file: FS::File,
         block: u64,
@@ -175,6 +195,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                 tftp::Packet::Ack { block } => {
                     debug!("Client acknowledged block {block:#x}.");
                     if u64::from(block) == (last_acked_block + 1) & 0xffff {
+                        timeouts = 0;
                         last_acked_block += 1;
 
                         if last_was_final {
@@ -183,6 +204,13 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                         }
                     } else {
                         debug!("Unexpected ACK. Ignoring.");
+                        return Self::ignore_packet(
+                            file,
+                            last_acked_block,
+                            timeouts,
+                            last_was_final,
+                        )
+                        .await;
                     }
                 }
                 tftp::Packet::Error {

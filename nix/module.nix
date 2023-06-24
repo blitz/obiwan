@@ -36,6 +36,12 @@ in
       default = 69;
       type = types.int;
     };
+
+    additionalArguments = mkOption {
+      description = "Additional command-line arguments to obiwan";
+      default = "";
+      type = types.str;
+    };
   };
 
   config = mkIf cfg.enable {
@@ -55,7 +61,7 @@ in
       # };
 
       serviceConfig = {
-        ExecStart = "${cfg.package}/bin/obiwan -vvl '${cfg.listenAddress}:${toString cfg.listenPort}' '${cfg.root}'";
+        ExecStart = "${cfg.package}/bin/obiwan -l '${cfg.listenAddress}:${toString cfg.listenPort}' '${cfg.root}' ${cfg.additionalArguments}";
 
         # DynamicUser = true;
         # NoNewPrivileges = true;

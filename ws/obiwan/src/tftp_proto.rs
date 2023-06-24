@@ -74,6 +74,8 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
     }
 
     async fn read_block(file: &mut FS::File, block: u64) -> Result<Vec<u8>> {
+        assert!(block >= 1);
+
         let mut buf = [0_u8; DEFAULT_TFTP_BLKSIZE];
         let size = file
             .read((block - 1) * u64::try_from(DEFAULT_TFTP_BLKSIZE)?, &mut buf)

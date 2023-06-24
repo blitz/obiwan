@@ -15,15 +15,21 @@
               nativeBuildInputs = [
                 pkgs.openssl
               ];
+
+              # Make this a fixed-output derivation so we don't
+              # needlessly rebuild it when the dependencies change.
+              outputHashMode = "recursive";
+              outputHashAlgo = "sha256";
+              outputHash = "U26n8vF8NGrWvIW6lRkrceu6f+wxlkAy7HpOKUmyfDA=";
             } ''
             mkdir -p $out
 
             # We want reproducible "random" files (at least not just zeroes).
-            head -c 1M | openssl enc -pbkdf2 -aes-128-ctr -nosalt -pass pass:12345 > $out/smallfile
+            head -c 1M /dev/zero | openssl enc -pbkdf2 -aes-128-ctr -nosalt -pass pass:12345 > $out/smallfile
 
             # We need a file that is larger than the typical block size (~1500 bytes) and has more blocks
             # than fits in 2^16.
-            head -c 150M | openssl enc -pbkdf2 -aes-128-ctr -nosalt -pass pass:12345 > $out/largefile
+            head -c 150M /dev/zero | openssl enc -pbkdf2 -aes-128-ctr -nosalt -pass pass:12345 > $out/largefile
           '';
         in
         {

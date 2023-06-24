@@ -39,6 +39,8 @@
           openFirewall = true;
 
           root = "${obiwanRoot}";
+
+          additionalArguments = "-vv";
         };
     };
 
@@ -65,7 +67,6 @@
       client.succeed("echo get largefile | tftp server", timeout = 120)
 
       # TODO Check whether file is intact.
-
       # TODO Check it again with pkgs.atftpd
     '';
   };

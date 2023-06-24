@@ -14,7 +14,7 @@ use crate::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use log::{debug, warn};
+use log::{debug, info, warn};
 
 const DEFAULT_TFTP_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_TFTP_BLKSIZE: usize = 512;
@@ -116,15 +116,14 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         root: &Path,
         path: &Path,
     ) -> Result<(Self, Response<tftp::Packet>)> {
-        match filesystem
-            .open(
-                &root.join(
-                    normalize(path)
-                        .ok_or_else(|| anyhow!("Failed to normalize path: {}", path.display()))?,
-                ),
-            )
-            .await
-        {
+        let local_path = root.join(
+            normalize(path)
+                .ok_or_else(|| anyhow!("Failed to normalize path: {}", path.display()))?,
+        );
+
+        info!("TFTP READ {} -> {}", path.display(), local_path.display());
+
+        match filesystem.open(&local_path).await {
             Ok(file) => Self::send_block(file, 1, 0).await,
             Err(err) => Ok((
                 Self::Dead,
@@ -174,6 +173,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         match event {
             Event::PacketReceived(packet) => match packet {
                 tftp::Packet::Ack { block } => {
+                    debug!("Client acknowledged block {block}.");
                     if u64::from(block) == (last_acked_block + 1) & 0xffff {
                         last_acked_block += 1;
 
@@ -208,10 +208,16 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                 if timeouts > MAX_RETRANSMISSIONS {
                     warn!("Client timed out sending ACKs.");
                     return Ok((Self::Dead, no_response()));
+                } else {
+                    debug!(
+                        "Timeout waiting for ACK for block {}, resending...",
+                        last_acked_block + 1
+                    );
                 }
             }
         }
 
+        debug!("Sending block {}.", last_acked_block + 1);
         Self::send_block(file, last_acked_block + 1, timeouts).await
     }
 }

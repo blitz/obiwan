@@ -42,7 +42,7 @@
 
           root = "${obiwanRoot}";
 
-          additionalArguments = "-vv";
+          extraOptions = [ "-vv" ];
         };
     };
 

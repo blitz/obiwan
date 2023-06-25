@@ -37,10 +37,10 @@ in
       type = types.int;
     };
 
-    additionalArguments = mkOption {
+    extraOptions = mkOption {
       description = "Additional command-line arguments to obiwan";
-      default = "";
-      type = types.str;
+      default = [ ];
+      type = types.listOf types.str;
     };
   };
 
@@ -61,7 +61,7 @@ in
       # };
 
       serviceConfig = {
-        ExecStart = "${cfg.package}/bin/obiwan -l '${cfg.listenAddress}:${toString cfg.listenPort}' '${cfg.root}' ${cfg.additionalArguments}";
+        ExecStart = "${cfg.package}/bin/obiwan -l '${cfg.listenAddress}:${toString cfg.listenPort}' '${cfg.root}' ${lib.concatStringsSep " " cfg.extraOptions}";
 
         # DynamicUser = true;
         # NoNewPrivileges = true;

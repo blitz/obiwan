@@ -93,7 +93,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         Ok((
             Self::ReadingFile {
                 file,
-                last_acked_block: block - 1,
+                last_acked_block: block,
                 timeout_events: timeouts,
                 last_was_final,
             },
@@ -193,8 +193,11 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         match event {
             Event::PacketReceived(packet) => match packet {
                 tftp::Packet::Ack { block } => {
-                    debug!("Client acknowledged block {block:#x}.");
-                    if u64::from(block) == (last_acked_block + 1) & 0xffff {
+                    let expected_block = last_acked_block + 1;
+
+                    debug!("Client acknowledged block {block:#x}, we expect {expected_block:#x}.");
+
+                    if u64::from(block) == expected_block & 0xffff {
                         timeouts = 0;
                         last_acked_block += 1;
 

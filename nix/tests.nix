@@ -51,6 +51,17 @@
       # The TFTP server will send us packets on a new UDP port.
       networking.firewall.enable = false;
 
+      nixpkgs.overlays = [
+        (final: prev: {
+          atftp = prev.atftp.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [
+              ./atftp-debug.patch
+            ];
+            doCheck = false;
+          });
+        })
+      ];
+
       environment.systemPackages = [
         pkgs.inetutils # tftp
         pkgs.atftp
@@ -68,10 +79,13 @@
       client.succeed("echo get SHA256SUMS | tftp server", timeout = 120)
       client.succeed("echo get smallfile | tftp server", timeout = 120)
       client.succeed("echo get largefile | tftp server", timeout = 120)
-      print(client.succeed("pwd ; ls -lh ."))
-      print(client.succeed("sha256sum --check SHA256SUMS"))
+      client.succeed("sha256sum --check SHA256SUMS")
 
-      # TODO Check it again with pkgs.atftpd
+      # client.succeed("rm SHA256SUMS smallfile largefile")
+      client.succeed("atftp -g -r SHA256SUMS server", timeout = 120)
+      client.succeed("atftp -g -r smallfile server")
+      client.succeed("atftp -g -r largefile server")
+      client.succeed("sha256sum --check SHA256SUMS")
     '';
   };
 }

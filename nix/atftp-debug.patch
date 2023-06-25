@@ -1,0 +1,29 @@
+diff --git a/tftp_file.c b/tftp_file.c
+index 163af45..64401a2 100644
+--- a/tftp_file.c
++++ b/tftp_file.c
+@@ -150,6 +150,7 @@ int tftp_receive_file(struct client_data *data)
+      int temp = 0;
+      int err;
+ 
++     data->trace = 1;
+      data->file_size = 0;
+      tftp_cancel = 0;
+ 
+@@ -553,6 +554,7 @@ int tftp_receive_file(struct client_data *data)
+                     timeout_state = S_SEND_ACK;
+ 
+                if ((!multicast) || (multicast && master_client)) {
++                    fprintf(stderr, "got block <block: %ld>\n", block_number);
+                     timeout_state = S_SEND_ACK;
+                     /* The sequence of blocks may contain a gap, i.e. (block_number > last_received_block + 1).
+                        Send an extra ACK for the last block before the gap once.
+@@ -567,7 +569,7 @@ int tftp_receive_file(struct client_data *data)
+                               extra_ack++;
+                               state = S_SEND_ACK;
+                          } else {
+-                              fprintf(stderr, "got wrong block <block: %ld>, ignoring\n", block_number);
++                              fprintf(stderr, "got wrong block <block: %ld, expected :%ld>, ignoring\n", block_number, last_received_block + 1);
+                               state = S_WAIT_PACKET;
+                          }
+                          break;

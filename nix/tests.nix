@@ -65,19 +65,21 @@
       client.start()
       client.wait_for_unit("network-online.target", timeout = 120)
 
-      client.succeed("echo get SHA256SUMS | tftp server", timeout = 120)
-      client.succeed("echo get smallfile | tftp server", timeout = 120)
+      with subtest("in.tftp can fetch files"):
+        client.succeed("echo get SHA256SUMS | tftp server", timeout = 120)
+        client.succeed("( echo binary ; echo get smallfile ) | tftp server", timeout = 120)
 
-      # This consistently fails and it doesn't look like it's our problem.
-      # client.succeed("echo get largefile | tftp server", timeout = 120)
+        # This consistently fails and it doesn't look like it's our problem.
+        # client.succeed("( echo binary ; echo get largefile ) | tftp server", timeout = 600)
 
-      # client.succeed("sha256sum --check SHA256SUMS")
+        print(client.succeed("grep -v largefile SHA256SUMS | sha256sum --check"))
 
-      # client.succeed("rm SHA256SUMS smallfile largefile")
-      client.succeed("atftp -g -r SHA256SUMS server", timeout = 120)
-      client.succeed("atftp -g -r smallfile server", timeout = 120)
-      client.succeed("atftp -g -r largefile server", timeout = 120)
-      client.succeed("sha256sum --check SHA256SUMS")
+      with subtest("atftp can fetch files"):
+        client.succeed("rm -f SHA256SUMS smallfile largefile")
+        client.succeed("atftp -g -r SHA256SUMS server", timeout = 120)
+        client.succeed("atftp -g -r smallfile server", timeout = 120)
+        client.succeed("atftp -g -r largefile server", timeout = 600)
+        client.succeed("sha256sum --check SHA256SUMS")
     '';
   };
 }

@@ -90,7 +90,7 @@
           # Only run integration tests on x86. The aarch64 runners
           # don't have KVM and the tests take too long.
           checks = lib.optionalAttrs (system == "x86_64-linux")
-            (import ./nix/tests.nix {
+            (import ./nix/tests {
               inherit pkgs;
               module = self.nixosModules.default;
             }) // {

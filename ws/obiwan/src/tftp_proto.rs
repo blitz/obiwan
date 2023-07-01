@@ -25,11 +25,12 @@ const MAX_RETRANSMISSIONS: u32 = 5;
 /// The current state of the TFTP connection.
 #[derive(Debug)]
 pub enum Connection<FS: simple_fs::Filesystem> {
+    /// The connection is terminated. No further packets are expected.
     Dead,
-    WaitingForInitialPacket {
-        filesystem: FS,
-        root: PathBuf,
-    },
+    /// We haven't seen an initial packet yet.
+    WaitingForInitialPacket { filesystem: FS, root: PathBuf },
+    /// The client successfully requested a file and we have managed
+    /// to open it. Now we are reading the contents.
     ReadingFile {
         file: FS::File,
 

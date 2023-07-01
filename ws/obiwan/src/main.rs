@@ -57,8 +57,16 @@ struct Args {
 fn drop_privileges(unprivileged_user: &str, directory: &Path) -> Result<PathBuf> {
     use nix::{
         errno::Errno,
+        libc::{prctl, PR_SET_NO_NEW_PRIVS},
         unistd::{chroot, geteuid, setuid, User},
     };
+
+    // prctl has no clear safety requirements, but we use it as the C
+    // man page intends it to be used.
+    match unsafe { prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } {
+        0 => info!("Applied NO_NEW_PRIVS."),
+        e => warn!("Failed to apply NO_NEW_PRIVS. Error: {e}"),
+    }
 
     // We need to lookup the user before chroot, otherwise the user db is gone.
     let unprivileged_uid = User::from_name(unprivileged_user)

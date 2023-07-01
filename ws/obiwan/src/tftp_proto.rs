@@ -29,7 +29,7 @@ struct AcceptedOptions {
 }
 
 impl AcceptedOptions {
-    fn to_option_vec(&self) -> Vec<RequestOption> {
+    fn to_option_vec(self) -> Vec<RequestOption> {
         let mut res = vec![];
 
         if let Some(block_size) = self.block_size {
@@ -227,8 +227,8 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 
         match filesystem.open(&local_path).await {
             Ok(file) => {
-                let option_vec = accepted_options.to_option_vec();
                 let block_size = accepted_options.block_size.unwrap_or(DEFAULT_TFTP_BLKSIZE);
+                let option_vec = accepted_options.to_option_vec();
 
                 debug!("Accepted these options: {option_vec:?}");
 
@@ -252,9 +252,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         for option in options {
             if option.name.eq_ignore_ascii_case("blksize") {
                 match option.value.parse::<u16>() {
-                    Ok(parsed_block_size)
-                        if parsed_block_size >= 8 && parsed_block_size <= 65464 =>
-                    {
+                    Ok(parsed_block_size) if (8..=65464).contains(&parsed_block_size) => {
                         block_size = Some(parsed_block_size);
                     }
                     _ => {
@@ -322,7 +320,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
             Event::Timeout => {
                 if timeout_events >= MAX_RETRANSMISSIONS {
                     warn!("Client timed out sending first ACK.");
-                    return Self::drop_connection();
+                    Self::drop_connection()
                 } else {
                     debug!("Timeout waiting for ACK for options, resending...",);
 

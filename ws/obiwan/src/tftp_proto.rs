@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use log::{debug, info, warn};
 
 const DEFAULT_TFTP_TIMEOUT: Duration = Duration::from_secs(1);
-const DEFAULT_TFTP_BLKSIZE: usize = 512;
+const DEFAULT_TFTP_BLKSIZE: u16 = 512;
 
 /// How many times do we resend packets, if we don't get a response.
 const MAX_RETRANSMISSIONS: u32 = 5;
@@ -44,6 +44,9 @@ pub enum Connection<FS: simple_fs::Filesystem> {
 
         /// We are waiting for the last ACK.
         last_was_final: bool,
+
+        /// The block size for data packets. This is negotiated via options when the connection is established.
+        block_size: u16,
     },
 }
 
@@ -55,12 +58,14 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         }
     }
 
-    async fn read_block(file: &mut FS::File, block: u64) -> Result<Vec<u8>> {
+    async fn read_block(file: &mut FS::File, block: u64, block_size: u16) -> Result<Vec<u8>> {
         assert!(block >= 1);
 
-        let mut buf = [0_u8; DEFAULT_TFTP_BLKSIZE];
+        let mut buf = Vec::new();
+        buf.resize(usize::from(block_size), 0);
+
         let size = file
-            .read((block - 1) * u64::try_from(DEFAULT_TFTP_BLKSIZE)?, &mut buf)
+            .read((block - 1) * u64::try_from(block_size)?, &mut buf)
             .await?;
 
         Ok(buf[0..size].to_vec())
@@ -71,6 +76,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         block: u64,
         timeouts: u32,
         last_was_final: bool,
+        block_size: u16,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         Ok((
             Self::ReadingFile {
@@ -78,6 +84,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                 last_acked_block: block,
                 timeout_events: timeouts,
                 last_was_final,
+                block_size,
             },
             Response {
                 packet: None,
@@ -121,18 +128,21 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         mut file: FS::File,
         block: u64,
         timeouts: u32,
+        block_size: u16,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         assert!(block > 0);
+        assert!(block_size > 0);
 
-        let data = Self::read_block(&mut file, block).await?;
-        assert!(data.len() <= DEFAULT_TFTP_BLKSIZE);
+        let data = Self::read_block(&mut file, block, block_size).await?;
+        assert!(data.len() <= usize::from(block_size));
 
         Ok((
             Self::ReadingFile {
                 file,
                 last_acked_block: block - 1,
                 timeout_events: timeouts,
-                last_was_final: data.len() < DEFAULT_TFTP_BLKSIZE,
+                last_was_final: data.len() < usize::from(block_size),
+                block_size,
             },
             Response {
                 packet: Some(tftp::Packet::Data {
@@ -148,6 +158,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         filesystem: FS,
         root: &Path,
         path: &Path,
+        block_size: u16,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         let local_path = root.join(
             normalize(path)
@@ -157,7 +168,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         info!("TFTP READ {} -> {}", path.display(), local_path.display());
 
         match filesystem.open(&local_path).await {
-            Ok(file) => Self::send_block(file, 1, 0).await,
+            Ok(file) => Self::send_block(file, 1, 0, block_size).await,
             Err(err) => Self::drop_connection_with_error(
                 tftp::error::UNDEFINED,
                 format!("Failed to open file {}: {err}", local_path.display()),
@@ -176,7 +187,10 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                     filename,
                     mode: _,
                     options: _,
-                } => Self::handle_initial_read(filesystem, root, &filename).await,
+                } => {
+                    Self::handle_initial_read(filesystem, root, &filename, DEFAULT_TFTP_BLKSIZE)
+                        .await
+                }
                 tftp::Packet::Wrq { .. } => Self::drop_connection_with_error(
                     tftp::error::ACCESS_VIOLATION,
                     "This server only supports reading files",
@@ -195,6 +209,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         mut last_acked_block: u64,
         mut timeouts: u32,
         last_was_final: bool,
+        block_size: u16,
         event: Event<tftp::Packet>,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         match event {
@@ -219,6 +234,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                             last_acked_block,
                             timeouts,
                             last_was_final,
+                            block_size,
                         )
                         .await;
                     }
@@ -253,7 +269,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         }
 
         debug!("Sending block {:x}.", last_acked_block + 1);
-        Self::send_block(file, last_acked_block + 1, timeouts).await
+        Self::send_block(file, last_acked_block + 1, timeouts, block_size).await
     }
 }
 
@@ -285,12 +301,14 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
                 last_acked_block,
                 timeout_events,
                 last_was_final,
+                block_size,
             } => {
                 Self::handle_reading_file_event(
                     file.clone(),
                     *last_acked_block,
                     *timeout_events,
                     *last_was_final,
+                    *block_size,
                     event,
                 )
                 .await?

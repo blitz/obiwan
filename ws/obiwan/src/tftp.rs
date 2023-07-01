@@ -27,6 +27,7 @@ pub mod error {
     pub const UNKNOWN_TRANSFER_ID: u16 = 5;
     pub const FILE_EXISTS: u16 = 6;
     pub const NO_SUCH_USER: u16 = 7;
+    pub const INVALID_OPTION: u16 = 8;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,8 +38,8 @@ pub enum RequestMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestOption {
-    name: String,
-    value: String,
+    pub name: String,
+    pub value: String,
 }
 
 /// A TFTP protocol packet

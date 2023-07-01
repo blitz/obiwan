@@ -79,5 +79,13 @@ pkgs.nixosTest {
       client.succeed("atftp -g -r smallfile server", timeout = 120)
       client.succeed("atftp -g -r largefile server", timeout = 600)
       client.succeed("sha256sum --check SHA256SUMS")
+
+    with subtest("atftp can fetch files with big block size"):
+      client.succeed("rm -f SHA256SUMS smallfile largefile")
+      client.succeed("atftp --option 'blksize 1400' -g -r SHA256SUMS server", timeout = 120)
+      client.succeed("atftp --option 'blksize 1400' -g -r smallfile server", timeout = 120)
+      client.succeed("atftp --option 'blksize 1400' -g -r largefile server", timeout = 600)
+      client.succeed("sha256sum --check SHA256SUMS")
+
   '';
 }

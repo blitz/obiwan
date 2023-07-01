@@ -9,7 +9,7 @@ use crate::{
     path::normalize,
     simple_fs::{self, File},
     simple_proto::{self, ConnectionStatus, Event, Response},
-    tftp,
+    tftp::{self, RequestOption},
 };
 
 use anyhow::{anyhow, Result};
@@ -22,6 +22,27 @@ const DEFAULT_TFTP_BLKSIZE: u16 = 512;
 /// How many times do we resend packets, if we don't get a response.
 const MAX_RETRANSMISSIONS: u32 = 5;
 
+/// The options sent by the client that we acknowledged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct AcceptedOptions {
+    block_size: Option<u16>,
+}
+
+impl AcceptedOptions {
+    fn to_option_vec(&self) -> Vec<RequestOption> {
+        let mut res = vec![];
+
+        if let Some(block_size) = self.block_size {
+            res.push(RequestOption {
+                name: "blksize".to_string(),
+                value: block_size.to_string(),
+            })
+        }
+
+        res
+    }
+}
+
 /// The current state of the TFTP connection.
 #[derive(Debug)]
 pub enum Connection<FS: simple_fs::Filesystem> {
@@ -29,6 +50,21 @@ pub enum Connection<FS: simple_fs::Filesystem> {
     Dead,
     /// We haven't seen an initial packet yet.
     WaitingForInitialPacket { filesystem: FS, root: PathBuf },
+
+    /// We have sent an OACK packet and wait for the corresponding ACK with block 0.
+    AcknowledgingOptions {
+        file: FS::File,
+
+        /// How many timeout events have we received for this packet.
+        timeout_events: u32,
+
+        /// The list of options that we want to acknowledge.
+        acknowledged_options: Vec<RequestOption>,
+
+        /// The block size for data packets.
+        block_size: u16,
+    },
+
     /// The client successfully requested a file and we have managed
     /// to open it. Now we are reading the contents.
     ReadingFile {
@@ -154,11 +190,33 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         ))
     }
 
+    async fn acknowledge_options(
+        file: FS::File,
+        acknowledged_options: Vec<RequestOption>,
+        timeout_events: u32,
+        block_size: u16,
+    ) -> Result<(Self, Response<tftp::Packet>)> {
+        Ok((
+            Self::AcknowledgingOptions {
+                file,
+                acknowledged_options: acknowledged_options.clone(),
+                block_size,
+                timeout_events,
+            },
+            Response {
+                packet: Some(tftp::Packet::OAck {
+                    options: acknowledged_options,
+                }),
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT),
+            },
+        ))
+    }
+
     async fn handle_initial_read(
         filesystem: FS,
         root: &Path,
         path: &Path,
-        block_size: u16,
+        accepted_options: AcceptedOptions,
     ) -> Result<(Self, Response<tftp::Packet>)> {
         let local_path = root.join(
             normalize(path)
@@ -168,12 +226,47 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         info!("TFTP READ {} -> {}", path.display(), local_path.display());
 
         match filesystem.open(&local_path).await {
-            Ok(file) => Self::send_block(file, 1, 0, block_size).await,
+            Ok(file) => {
+                let option_vec = accepted_options.to_option_vec();
+                let block_size = accepted_options.block_size.unwrap_or(DEFAULT_TFTP_BLKSIZE);
+
+                debug!("Accepted these options: {option_vec:?}");
+
+                if option_vec.is_empty() {
+                    Self::send_block(file, 1, 0, block_size).await
+                } else {
+                    Self::acknowledge_options(file, option_vec, 0, block_size).await
+                }
+            }
             Err(err) => Self::drop_connection_with_error(
                 tftp::error::UNDEFINED,
                 format!("Failed to open file {}: {err}", local_path.display()),
             ),
         }
+    }
+
+    /// Take the client's proposed options and see what is useful for us.
+    fn accept_options(options: &[RequestOption]) -> AcceptedOptions {
+        let mut block_size: Option<u16> = None;
+
+        for option in options {
+            if option.name.eq_ignore_ascii_case("blksize") {
+                match option.value.parse::<u16>() {
+                    Ok(parsed_block_size)
+                        if parsed_block_size >= 8 && parsed_block_size <= 65464 =>
+                    {
+                        block_size = Some(parsed_block_size);
+                    }
+                    _ => {
+                        warn!("Ignoring invalid block size: {}", option.value);
+                    }
+                }
+            } else {
+                debug!("Ignoring unknown option {}={}", option.name, option.value);
+            }
+        }
+
+        AcceptedOptions { block_size }
     }
 
     async fn handle_initial_event(
@@ -186,10 +279,15 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                 tftp::Packet::Rrq {
                     filename,
                     mode: _,
-                    options: _,
+                    options,
                 } => {
-                    Self::handle_initial_read(filesystem, root, &filename, DEFAULT_TFTP_BLKSIZE)
-                        .await
+                    Self::handle_initial_read(
+                        filesystem,
+                        root,
+                        &filename,
+                        Self::accept_options(&options),
+                    )
+                    .await
                 }
                 tftp::Packet::Wrq { .. } => Self::drop_connection_with_error(
                     tftp::error::ACCESS_VIOLATION,
@@ -201,6 +299,42 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                 ),
             },
             Event::Timeout => panic!("Can't receive timeout as initial event"),
+        }
+    }
+
+    async fn handle_option_acknowledgement(
+        file: FS::File,
+        timeout_events: u32,
+        acknowledged_options: Vec<RequestOption>,
+        block_size: u16,
+        event: Event<tftp::Packet>,
+    ) -> Result<(Self, Response<tftp::Packet>)> {
+        match event {
+            Event::PacketReceived(p) => match p {
+                tftp::Packet::Ack { block } if block == 0 => {
+                    Self::send_block(file, 1, 0, block_size).await
+                }
+                _ => Self::drop_connection_with_error(
+                    tftp::error::ILLEGAL_OPERATION,
+                    "Expected ACK 0 as OACK response",
+                ),
+            },
+            Event::Timeout => {
+                if timeout_events >= MAX_RETRANSMISSIONS {
+                    warn!("Client timed out sending first ACK.");
+                    return Self::drop_connection();
+                } else {
+                    debug!("Timeout waiting for ACK for options, resending...",);
+
+                    Self::acknowledge_options(
+                        file,
+                        acknowledged_options,
+                        timeout_events,
+                        block_size,
+                    )
+                    .await
+                }
+            }
         }
     }
 
@@ -295,6 +429,21 @@ impl<FS: simple_fs::Filesystem> simple_proto::SimpleUdpProtocol for Connection<F
             ),
             Self::WaitingForInitialPacket { filesystem, root } => {
                 Self::handle_initial_event(filesystem.clone(), root, event).await?
+            }
+            Self::AcknowledgingOptions {
+                file,
+                timeout_events,
+                acknowledged_options,
+                block_size,
+            } => {
+                Self::handle_option_acknowledgement(
+                    file.clone(),
+                    *timeout_events,
+                    acknowledged_options.clone(),
+                    *block_size,
+                    event,
+                )
+                .await?
             }
             Self::ReadingFile {
                 file,

@@ -97,10 +97,12 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         ))
     }
 
-    fn drop_connection_with_error(
+    fn drop_connection_with_error<S: Into<String>>(
         error_code: u16,
-        error_msg: &str,
+        error_msg: S,
     ) -> Result<(Self, Response<tftp::Packet>)> {
+        let error_msg: String = error_msg.into();
+
         warn!("Sending error to client: {error_code} {error_msg}");
 
         Ok((
@@ -108,7 +110,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
             Response {
                 packet: Some(tftp::Packet::Error {
                     error_code,
-                    error_msg: error_msg.to_owned(),
+                    error_msg,
                 }),
                 next_status: ConnectionStatus::Terminated,
             },
@@ -158,7 +160,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
             Ok(file) => Self::send_block(file, 1, 0).await,
             Err(err) => Self::drop_connection_with_error(
                 tftp::error::UNDEFINED,
-                &format!("Failed to open file {}: {err}", local_path.display()),
+                format!("Failed to open file {}: {err}", local_path.display()),
             ),
         }
     }

@@ -521,4 +521,58 @@ mod tests {
             }
         );
     }
+
+    #[tokio::test]
+    async fn read_with_custom_block_size() {
+        let mut file_contents = [0xab_u8; 513].to_vec();
+
+        // Make the contents more interesting.
+        file_contents[2] = 0x12;
+        file_contents[512] = 0x23;
+
+        let fs = simple_fs::MapFilesystem::from([(
+            PathBuf::from_str("/foo").unwrap(),
+            file_contents.clone(),
+        )]);
+        let mut con = Connection::new_with_filesystem(fs, "/");
+
+        assert_eq!(
+            con.handle_event(Event::PacketReceived(tftp::Packet::Rrq {
+                filename: PathBuf::from("/foo"),
+                mode: tftp::RequestMode::Octet,
+                options: vec![
+                    (RequestOption {
+                        name: "blksize".to_string(),
+                        value: "10".to_string(),
+                    })
+                ]
+            }))
+            .await
+            .unwrap(),
+            Response {
+                packet: Some(tftp::Packet::OAck {
+                    options: vec![
+                        (RequestOption {
+                            name: "blksize".to_string(),
+                            value: "10".to_string(),
+                        })
+                    ]
+                }),
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT)
+            }
+        );
+
+        assert_eq!(
+            con.handle_event(Event::PacketReceived(tftp::Packet::Ack { block: 0 }))
+                .await
+                .unwrap(),
+            Response {
+                packet: Some(tftp::Packet::Data {
+                    block: 1,
+                    data: file_contents[0..10].to_vec()
+                }),
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT)
+            }
+        );
+    }
 }

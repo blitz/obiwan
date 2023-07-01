@@ -157,7 +157,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         match filesystem.open(&local_path).await {
             Ok(file) => Self::send_block(file, 1, 0).await,
             Err(err) => Self::drop_connection_with_error(
-                0,
+                tftp::error::UNDEFINED,
                 &format!("Failed to open file {}: {err}", local_path.display()),
             ),
         }
@@ -176,11 +176,11 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                     options: _,
                 } => Self::handle_initial_read(filesystem, root, &filename).await,
                 tftp::Packet::Wrq { .. } => Self::drop_connection_with_error(
-                    2, /* Access violation */
+                    tftp::error::ACCESS_VIOLATION,
                     "This server only supports reading files",
                 ),
                 _ => Self::drop_connection_with_error(
-                    0, /* TODO */
+                    tftp::error::ILLEGAL_OPERATION,
                     "Initial request is not Rrq or Wrq",
                 ),
             },
@@ -230,7 +230,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                 }
                 _ => {
                     return Self::drop_connection_with_error(
-                        0,
+                        tftp::error::ILLEGAL_OPERATION,
                         "Received unexpected packet. Closing connection.",
                     );
                 }

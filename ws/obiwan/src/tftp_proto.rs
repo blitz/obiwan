@@ -47,25 +47,6 @@ pub enum Connection<FS: simple_fs::Filesystem> {
     },
 }
 
-fn error_response(error_code: u16, error_msg: &str) -> Response<tftp::Packet> {
-    warn!("Sending error to client: {error_code} {error_msg}");
-
-    Response {
-        packet: Some(tftp::Packet::Error {
-            error_code,
-            error_msg: error_msg.to_owned(),
-        }),
-        next_status: ConnectionStatus::Terminated,
-    }
-}
-
-fn no_response() -> Response<tftp::Packet> {
-    Response {
-        packet: None,
-        next_status: ConnectionStatus::Terminated,
-    }
-}
-
 impl<FS: simple_fs::Filesystem> Connection<FS> {
     pub fn new_with_filesystem(filesystem: FS, root: impl AsRef<Path>) -> Self {
         Self::WaitingForInitialPacket {
@@ -101,6 +82,35 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
             Response {
                 packet: None,
                 next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT),
+            },
+        ))
+    }
+
+    /// Drop the connection without sending an error.
+    fn drop_connection() -> Result<(Self, Response<tftp::Packet>)> {
+        Ok((
+            Self::Dead,
+            Response {
+                packet: None,
+                next_status: ConnectionStatus::Terminated,
+            },
+        ))
+    }
+
+    fn drop_connection_with_error(
+        error_code: u16,
+        error_msg: &str,
+    ) -> Result<(Self, Response<tftp::Packet>)> {
+        warn!("Sending error to client: {error_code} {error_msg}");
+
+        Ok((
+            Self::Dead,
+            Response {
+                packet: Some(tftp::Packet::Error {
+                    error_code,
+                    error_msg: error_msg.to_owned(),
+                }),
+                next_status: ConnectionStatus::Terminated,
             },
         ))
     }
@@ -146,13 +156,10 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 
         match filesystem.open(&local_path).await {
             Ok(file) => Self::send_block(file, 1, 0).await,
-            Err(err) => Ok((
-                Self::Dead,
-                error_response(
-                    0, /* TODO File not found */
-                    &format!("Failed to open file: {err}"),
-                ),
-            )),
+            Err(err) => Self::drop_connection_with_error(
+                0,
+                &format!("Failed to open file {}: {err}", local_path.display()),
+            ),
         }
     }
 
@@ -168,17 +175,14 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                     mode: _,
                     options: _,
                 } => Self::handle_initial_read(filesystem, root, &filename).await,
-                tftp::Packet::Wrq { .. } => Ok((
-                    Self::Dead,
-                    error_response(
-                        2, /* Access violation */
-                        "This server only supports reading files",
-                    ),
-                )),
-                _ => Ok((
-                    Self::Dead,
-                    error_response(0 /* TODO */, "Initial request is not Rrq or Wrq"),
-                )),
+                tftp::Packet::Wrq { .. } => Self::drop_connection_with_error(
+                    2, /* Access violation */
+                    "This server only supports reading files",
+                ),
+                _ => Self::drop_connection_with_error(
+                    0, /* TODO */
+                    "Initial request is not Rrq or Wrq",
+                ),
             },
             Event::Timeout => panic!("Can't receive timeout as initial event"),
         }
@@ -204,7 +208,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 
                         if last_was_final {
                             debug!("Successfully sent {last_acked_block} blocks.");
-                            return Ok((Self::Dead, no_response()));
+                            return Self::drop_connection();
                         }
                     } else {
                         debug!("Unexpected ACK. Ignoring.");
@@ -222,13 +226,13 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                     error_msg,
                 } => {
                     warn!("Client sent error: {error_code} {error_msg}");
-                    return Ok((Self::Dead, no_response()));
+                    return Self::drop_connection();
                 }
                 _ => {
-                    return Ok((
-                        Self::Dead,
-                        error_response(0, "Received unexpected packet. Closing connection."),
-                    ));
+                    return Self::drop_connection_with_error(
+                        0,
+                        "Received unexpected packet. Closing connection.",
+                    );
                 }
             },
             Event::Timeout => {
@@ -236,7 +240,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 
                 if timeouts > MAX_RETRANSMISSIONS {
                     warn!("Client timed out sending ACKs.");
-                    return Ok((Self::Dead, no_response()));
+                    return Self::drop_connection();
                 } else {
                     debug!(
                         "Timeout waiting for ACK for block {:x}, resending...",

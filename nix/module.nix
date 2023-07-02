@@ -92,8 +92,57 @@ in
         ProtectKernelTunables = true;
         SystemCallArchitectures = "native";
         MemoryDenyWriteExecute = true;
+        RestrictRealtime = true;
+        LockPersonality = true;
+        RestrictSUIDSGID = true;
+        RestrictNamespaces = true;
+        ProcSubset = "pid";
+        ProtectProc = "invisible";
+        Umask = "077";
 
-        # This somehow fails to do what I think it does. Instead of limiting capabilities, we get none?
+        SystemCallFilter = [
+          "~@clock"
+          "~@cpu-emulation"
+          "~@debug"
+          "~@module"
+          "~@obsolete"
+          "~@raw-io"
+          "~@reboot"
+          "~@resources"
+          "~@swap"
+          "~@sync"
+        ];
+
+        CapabilityBoundingSet = [
+          "~CAP_AUDIT_CONTROL"
+          "~CAP_AUDIT_READ"
+          "~CAP_AUDIT_WRITE"
+          "~CAP_BLOCK_SUSPEND"
+          "~CAP_CHOWN"
+          "~CAP_FSETID"
+          "~CAP_IPC_LOCK"
+          "~CAP_KILL"
+          "~CAP_LEASE"
+          "~CAP_LINUX_IMMUTABLE"
+          "~CAP_MAC_ADMIN"
+          "~CAP_MAC_OVERRIDE"
+          "~CAP_MKNOD"
+          "~CAP_NET_ADMIN"
+          "~CAP_NET_RAW"
+          "~CAP_SETFCAP"
+          "~CAP_SYSLOG"
+          "~CAP_SYS_ADMIN"
+          "~CAP_SYS_BOOT"
+          "~CAP_SYS_NICE"
+          "~CAP_SYS_PACCT"
+          "~CAP_SYS_PTRACE"
+          "~CAP_SYS_RAWIO"
+          "~CAP_SYS_RESOURCE"
+          "~CAP_SYS_TTY_CONFIG"
+        ];
+
+        # Instead of the above, I would rather build an allow-list,
+        # but this doesn't grant any capabilities?
         #
         # CapabilityBoundingSet = [
         #   "CAP_SYS_CHROOT"

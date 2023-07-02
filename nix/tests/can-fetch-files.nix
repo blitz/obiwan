@@ -61,6 +61,9 @@ pkgs.nixosTest {
     server.wait_for_unit("network-online.target", timeout = 120)
     server.wait_for_unit("obiwan.service")
 
+    # We want to be a good sandboxing example.
+    server.succeed("systemd-analyze security | grep -q 'obiwan.* OK'")
+
     client.start()
     client.wait_for_unit("network-online.target", timeout = 120)
 

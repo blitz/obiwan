@@ -32,7 +32,7 @@ struct Args {
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     verbose: u8,
 
-    /// Enable timestampts
+    /// Enable timestamps in log output.
     #[arg(short = 't', long)]
     timestamps: bool,
 

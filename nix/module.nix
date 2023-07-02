@@ -63,23 +63,45 @@ in
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/obiwan -l '${cfg.listenAddress}:${toString cfg.listenPort}' '${cfg.root}' ${lib.concatStringsSep " " cfg.extraOptions}";
 
+        # It would be nice if we could use this. Prevents us from
+        # binding to the server port.
+        #
         # DynamicUser = true;
-        # NoNewPrivileges = true;
-        # RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+
+        # Obiwan does this on its own, but it can't hurt.
+        NoNewPrivileges = true;
+
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+
+        # These prevent binding to the server port.
+        #
         # PrivateDevices = true;
         # PrivateUsers = true;
-        # ProtectClock = true;
-        # ProtectControlGroups = true;
-        # ProtectHome = true;
-        # ProtectKernelLogs = true;
-        # ProtectKernelModules = true;
-        # ProtectKernelTunables = true;
-        # SystemCallArchitectures = "native";
+
+        ProtectClock = true;
+        ProtectHostname = true;
+        PrivateTmp = true;
+
+        # Mount everything read-only except /dev, /proc, /sys.
+        ProtectSystem = "strict";
+
+        ProtectControlGroups = true;
+        ProtectHome = true;
+        ProtectKernelLogs = true;
+        ProtectKernelModules = true;
+        ProtectKernelTunables = true;
+        SystemCallArchitectures = "native";
+        MemoryDenyWriteExecute = true;
+
+        # This somehow fails to do what I think it does. Instead of limiting capabilities, we get none?
         #
         # CapabilityBoundingSet = [
         #   "CAP_SYS_CHROOT"
         #   "CAP_SET_UID"
-        # ] ++ optional (cfg.listenPort < 1024) "CAP_NET_BIND_SERVICE";
+
+        #   # We could get rid of this, if we let systemd open our server socket.
+        #   "CAP_NET_BIND_SERVICE"
+        # ];
       };
     };
   };

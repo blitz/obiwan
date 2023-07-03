@@ -14,7 +14,7 @@ use crate::{
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 
 const DEFAULT_TFTP_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_TFTP_BLKSIZE: u16 = 512;
@@ -26,6 +26,7 @@ const MAX_RETRANSMISSIONS: u32 = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct AcceptedOptions {
     block_size: Option<u16>,
+    transfer_size: Option<u64>,
 }
 
 impl AcceptedOptions {
@@ -36,6 +37,13 @@ impl AcceptedOptions {
             res.push(RequestOption {
                 name: "blksize".to_string(),
                 value: block_size.to_string(),
+            })
+        }
+
+        if let Some(transfer_size) = self.transfer_size {
+            res.push(RequestOption {
+                name: "tsize".to_string(),
+                value: transfer_size.to_string(),
             })
         }
 
@@ -212,11 +220,44 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         ))
     }
 
+    /// Take the client's proposed options and see what is useful for us.
+    async fn accept_options(file: &FS::File, options: &[RequestOption]) -> AcceptedOptions {
+        let mut block_size: Option<u16> = None;
+        let mut transfer_size: Option<u64> = None;
+
+        for option in options {
+            if option.name.eq_ignore_ascii_case("blksize") {
+                match option.value.parse::<u16>() {
+                    Ok(parsed_block_size) if (8..=65464).contains(&parsed_block_size) => {
+                        block_size = Some(parsed_block_size);
+                    }
+                    _ => {
+                        warn!("Ignoring invalid block size: {}", option.value);
+                    }
+                }
+            } else if option.name.eq_ignore_ascii_case("tsize") {
+                match file.size().await {
+                    Ok(size) => transfer_size = Some(size),
+                    Err(e) => {
+                        error!("Failed to query size of file, ignoring TSIZE option: {e}");
+                    }
+                }
+            } else {
+                debug!("Ignoring unknown option {}={}", option.name, option.value);
+            }
+        }
+
+        AcceptedOptions {
+            block_size,
+            transfer_size,
+        }
+    }
+
     async fn handle_initial_read(
         filesystem: FS,
         root: &Path,
         path: &Path,
-        accepted_options: AcceptedOptions,
+        options: &[RequestOption],
     ) -> Result<(Self, Response<tftp::Packet>)> {
         let local_path = root.join(
             normalize(path)
@@ -227,6 +268,8 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
 
         match filesystem.open(&local_path).await {
             Ok(file) => {
+                let accepted_options = Self::accept_options(&file, options).await;
+
                 let block_size = accepted_options.block_size.unwrap_or(DEFAULT_TFTP_BLKSIZE);
                 let option_vec = accepted_options.to_option_vec();
 
@@ -245,28 +288,6 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
         }
     }
 
-    /// Take the client's proposed options and see what is useful for us.
-    fn accept_options(options: &[RequestOption]) -> AcceptedOptions {
-        let mut block_size: Option<u16> = None;
-
-        for option in options {
-            if option.name.eq_ignore_ascii_case("blksize") {
-                match option.value.parse::<u16>() {
-                    Ok(parsed_block_size) if (8..=65464).contains(&parsed_block_size) => {
-                        block_size = Some(parsed_block_size);
-                    }
-                    _ => {
-                        warn!("Ignoring invalid block size: {}", option.value);
-                    }
-                }
-            } else {
-                debug!("Ignoring unknown option {}={}", option.name, option.value);
-            }
-        }
-
-        AcceptedOptions { block_size }
-    }
-
     async fn handle_initial_event(
         filesystem: FS,
         root: &Path,
@@ -278,15 +299,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
                     filename,
                     mode: _,
                     options,
-                } => {
-                    Self::handle_initial_read(
-                        filesystem,
-                        root,
-                        &filename,
-                        Self::accept_options(&options),
-                    )
-                    .await
-                }
+                } => Self::handle_initial_read(filesystem, root, &filename, &options).await,
                 tftp::Packet::Wrq { .. } => Self::drop_connection_with_error(
                     tftp::error::ACCESS_VIOLATION,
                     "This server only supports reading files",
@@ -311,6 +324,13 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
             Event::PacketReceived(p) => match p {
                 tftp::Packet::Ack { block } if block == 0 => {
                     Self::send_block(file, 1, 0, block_size).await
+                }
+                tftp::Packet::Error {
+                    error_code,
+                    error_msg,
+                } => {
+                    warn!("Client declined options: {error_code} {error_msg}");
+                    Self::drop_connection()
                 }
                 _ => Self::drop_connection_with_error(
                     tftp::error::ILLEGAL_OPERATION,
@@ -568,6 +588,43 @@ mod tests {
                 packet: Some(tftp::Packet::Data {
                     block: 1,
                     data: file_contents[0..10].to_vec()
+                }),
+                next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT)
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn query_file_size() {
+        let file_contents = [0xab_u8; 513].to_vec();
+
+        let fs = simple_fs::MapFilesystem::from([(
+            PathBuf::from_str("/foo").unwrap(),
+            file_contents.clone(),
+        )]);
+        let mut con = Connection::new_with_filesystem(fs, "/");
+
+        assert_eq!(
+            con.handle_event(Event::PacketReceived(tftp::Packet::Rrq {
+                filename: PathBuf::from("/foo"),
+                mode: tftp::RequestMode::Octet,
+                options: vec![
+                    (RequestOption {
+                        name: "tsize".to_string(),
+                        value: "0".to_string(),
+                    })
+                ]
+            }))
+            .await
+            .unwrap(),
+            Response {
+                packet: Some(tftp::Packet::OAck {
+                    options: vec![
+                        (RequestOption {
+                            name: "tsize".to_string(),
+                            value: "513".to_string(),
+                        })
+                    ]
                 }),
                 next_status: ConnectionStatus::WaitingForPacket(DEFAULT_TFTP_TIMEOUT)
             }

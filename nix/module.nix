@@ -86,7 +86,6 @@ in
         ProtectSystem = "strict";
 
         ProtectControlGroups = true;
-        ProtectHome = true;
         ProtectKernelLogs = true;
         ProtectKernelModules = true;
         ProtectKernelTunables = true;
@@ -98,7 +97,6 @@ in
         RestrictNamespaces = true;
         ProcSubset = "pid";
         ProtectProc = "invisible";
-        Umask = "077";
 
         SystemCallFilter = [
           "~@clock"

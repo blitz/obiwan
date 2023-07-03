@@ -18,6 +18,9 @@ pub trait File: Debug + Send + Sync + Sized + Clone {
     /// of bytes read. If less bytes are read than `buf` has space, the
     /// file has ended.
     async fn read(&self, offset: u64, buf: &mut [u8]) -> Result<usize, Self::Error>;
+
+    /// Return the size of the file in bytes.
+    async fn size(&self) -> Result<u64, Self::Error>;
 }
 
 #[async_trait]
@@ -64,6 +67,12 @@ impl File for AsyncFile {
 
         Ok(offset)
     }
+
+    async fn size(&self) -> Result<u64, Self::Error> {
+        let file = self.file.lock().await;
+
+        Ok(file.metadata().await?.len())
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -101,6 +110,10 @@ impl File for Vec<u8> {
 
         buf[..len].copy_from_slice(&self[offset..(offset + len)]);
         Ok(len)
+    }
+
+    async fn size(&self) -> Result<u64, Self::Error> {
+        Ok(u64::try_from(self.len()).unwrap())
     }
 }
 
@@ -145,5 +158,7 @@ mod tests {
 
         assert_eq!(file.read(3, &mut buf).await.unwrap(), 1);
         assert_eq!(&buf[0..1], &[4]);
+
+        assert_eq!(file.size().await.unwrap(), 4);
     }
 }

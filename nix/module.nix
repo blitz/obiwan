@@ -97,6 +97,7 @@ in
         RestrictNamespaces = true;
         ProcSubset = "pid";
         ProtectProc = "invisible";
+        UMask = "077";
 
         SystemCallFilter = [
           "~@clock"

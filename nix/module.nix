@@ -140,16 +140,17 @@ in
           "~CAP_SYS_TTY_CONFIG"
         ];
 
-        # Instead of the above, I would rather build an allow-list,
-        # but this doesn't grant any capabilities?
+        # Instead of the above, I would rather build an allow-list that includes:
         #
-        # CapabilityBoundingSet = [
-        #   "CAP_SYS_CHROOT"
-        #   "CAP_SET_UID"
-
-        #   # We could get rid of this, if we let systemd open our server socket.
-        #   "CAP_NET_BIND_SERVICE"
-        # ];
+        #   - CAP_SYS_CHROOT
+        #   - CAP_SET_UID
+        #   - CAP_NET_BIND_SERVICE
+        #
+        # and start obiwan as an unprivileged user. But this only
+        # works with NoNewPrivileges=false and this is incompatible
+        # with many sandboxing features above.
+        #
+        # So we are stuck with letting obiwan drop root.
       };
     };
   };

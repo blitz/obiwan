@@ -11,7 +11,6 @@ anyhow = "1.0.71"
 clap = { version = "4.3.1", features = [ "derive" ] }
 stderrlog = "0.5.4"
 nix = "0.26.2"
-# TODO Strip this down.
-tokio = { version = "1.28.2", features = ["full"] }
+tokio = { version = "1.28.2", default-features = false, features = ["fs", "io-util", "net", "rt", "sync", "time"] }
 binrw = "0.11.2"
 async-trait = "0.1.68"

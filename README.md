@@ -47,27 +47,27 @@ a NixOS configuration:
   # ...
 
   inputs = {
-	# ... other inputs ...
+    # ... other inputs ...
 
-	obiwan = {
-	  url = "github:blitz/obiwan";
+    obiwan = {
+      url = "github:blitz/obiwan";
 
-	  # Optional to reduce the system closure. May not work
-	  # inputs.nixpkgs.follows = "nixpkgs";
-	};
+      # Optional to reduce the system closure. May not work
+      # inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = { self, nixpkgs, obiwan ... }: {
-	nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
-	  system = "x86_64-linux";
-	  modules = [
-		# ... other modules ...
+    nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        # ... other modules ...
 
-		obiwan.nixosModules.default
+        obiwan.nixosModules.default
 
-		./machine.nix
-	  ];
-	};
+        ./machine.nix
+      ];
+    };
   };
 }
 ```
@@ -80,14 +80,14 @@ You can then enable Obiwan by adding the following configuration in
   # ... other configuration ...
 
   services.obiwan = {
-	enable = true;
+    enable = true;
 
-	# The directory that will be made available via TFTP. Must exist or the
-	# service will fail to start.
-	root = "/srv/tftp";
+    # The directory that will be made available via TFTP. Must exist or the
+    # service will fail to start.
+    root = "/srv/tftp";
 
-	# The IP the service will listen on.
-	listenAddress = "192.168.1.1";
+    # The IP the service will listen on.
+    listenAddress = "192.168.1.1";
   };
 }
 ```

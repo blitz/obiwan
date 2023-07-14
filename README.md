@@ -34,7 +34,64 @@ asynchronous capabilities of the Tokio library.
 
 ### NixOS
 
-TODO
+This documentation assumes that your [NixOS](https://nixos.org/)
+system is built as a [Nix Flake](https://nixos.wiki/wiki/Flakes).
+
+In your `flake.nix`, add Obiwan as an input and enable the module in
+a NixOS configuration:
+
+```nix
+{
+  # ...
+
+  inputs = {
+	# ... other inputs ...
+
+	obiwan = {
+	  url = "github:blitz/obiwan";
+
+	  # Optional to reduce the system closure. May not work
+	  # inputs.nixpkgs.follows = "nixpkgs";
+	};
+  };
+
+  outputs = { self, nixpkgs, obiwan ... }: {
+	nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
+	  system = "x86_64-linux";
+	  modules = [
+		# ... other modules ...
+
+		obiwan.nixosModules.default
+
+		./machine.nix
+	  ];
+	};
+  };
+}
+```
+
+You can then enable Obiwan by adding the following configuration in
+`machine.nix`:
+
+```nix
+{ config, pkgs, lib, ... }: {
+  # ... other configuration ...
+
+  services.obiwan = {
+	enable = true;
+
+	# The directory that will be made available via TFTP. Must exist or the
+	# service will fail to start.
+	root = "/srv/tftp";
+
+	# The IP the service will listen on.
+	listenAddress = "192.168.1.1";
+  };
+}
+```
+
+Check `nix/module.nix` in this repository for other configuration
+options.
 
 ### Other Linux
 

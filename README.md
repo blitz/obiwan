@@ -18,7 +18,9 @@ asynchronous capabilities of the Tokio library.
   environments, it exclusively supports reading files to eliminate
   potential security loopholes and misconfigurations.
 
-- **Security-First**: Obiwan takes advantage of Rust's memory safety and its minimalist design to substantially shrink the attack surface
+- **Security-First**: Obiwan takes advantage of Rust's memory safety
+  and its minimalist design to substantially shrink the attack
+  surface.
 
 - **OK Performance**: While staying simple, leveraging Tokio's
   asynchronous capabilities, Obiwan handles a plethora of concurrent

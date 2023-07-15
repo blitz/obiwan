@@ -5,8 +5,8 @@
 
 ## Introduction 🚀
 
-Obiwan is a state-of-the-art TFTP server engineered specifically for
-PXE Boot environments. It is designed to serve as a modern and secure
+Obiwan is a TFTP server engineered specifically for PXE Boot
+environments. It is designed to serve as a modern and secure
 replacement for legacy TFTP server implementations written in C. With
 a focus on security, performance, and simplicity, Obiwan integrates
 the powerful and memory-safe Rust language with the high-performance
@@ -31,6 +31,33 @@ asynchronous capabilities of the Tokio library.
 
 - **Free Software**: Obiwan thrives with your support and is open for
   contributions!
+
+## Tested Clients
+
+These clients are checked via CI:
+
+- [atftp](https://sourceforge.net/projects/atftp/)
+- [tftp-hpa / in.tftp](https://mirrors.edge.kernel.org/pub/software/network/tftp/tftp-hpa/)
+
+The following clients have been reported to work:
+
+- Lenovo ThinkStation P360 UEFI
+- [iPXE](https://ipxe.org/)
+
+Feel free to open a PR to add to these lists!
+
+## Contributing
+
+Obiwan is currently experimental and is missing features and
+testing. Most welcome are contributions that improve documentation,
+increase test coverage, or implement missing TFTP extensions. Security
+improvements, such as reducing the number of dependencies or improving
+sandboxing are also highly welcome. Performance improvements, such as
+removing memory allocations, are also welcome as long as they don't
+complicate the code base.
+
+Obiwan will never support writing files. Please do not try to add this
+feature.
 
 ## Getting Started 🏁
 
@@ -97,8 +124,28 @@ options.
 
 ### Other Linux
 
-TODO
+Obiwan is a Rust application without special dependencies. With a
+recent Rust toolchain, you can build and install it with `cargo`:
+
+```console
+$ cd ws/obiwan
+
+# Check that all unit tests pass.
+$ cargo test
+
+# Build the release version.
+$ cargo build --release
+
+# Install it into $HOME/.cargo/bin
+$ cargo install --path .
+```
+
+To run Obiwan as a systemd unit, you can take inspiration from
+`nix/module.nix`. See `systemd.services.obiwan` for the NixOS systemd
+unit description, which should be a good starting point for any other
+Linux.
 
 # Support
 
-Should you encounter any issues or have questions, please open an issue on GitHub.
+Should you encounter any issues or have questions, please open an
+issue on GitHub.

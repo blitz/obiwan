@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace, warn, LevelFilter};
 use tokio::{runtime::Handle, time::timeout};
 
 use crate::{
@@ -31,10 +31,6 @@ struct Args {
     /// Verbose mode. Specify multiple times to increase verbosity.
     #[arg(short = 'v', long, action = clap::ArgAction::Count)]
     verbose: u8,
-
-    /// Enable timestamps in log output.
-    #[arg(short = 't', long)]
-    timestamps: bool,
 
     /// The user to drop privileges to when started as root.
     #[arg(long, default_value = "nobody")]
@@ -197,16 +193,15 @@ async fn server_main(runtime: &Handle, socket: tokio::net::UdpSocket, root: &Pat
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    stderrlog::new()
-        .module(module_path!())
-        .quiet(args.quiet)
-        .verbosity(usize::from(1 + args.verbose)) // Default to printing warnings and errors
-        .timestamp(if args.timestamps {
-            stderrlog::Timestamp::Microsecond
-        } else {
-            stderrlog::Timestamp::Off
-        })
-        .init()?;
+    simplelog::SimpleLogger::init(
+        match args.verbose {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            _ => LevelFilter::Trace,
+        },
+        simplelog::Config::default(),
+    )?;
 
     info!("Hello!");
     debug!("Command line parameters: {:?}", args);

@@ -9,7 +9,7 @@ license.workspace = true
 log = "0.4.19"
 anyhow = "1.0.72"
 clap = { version = "4.3.19", default-features = false, features = [ "std", "help", "usage", "derive" ] }
-stderrlog = "0.5.4"
+simplelog = { version = "0.12.1", default-features = false }
 nix = "0.26.2"
 tokio = { version = "1.29.1", default-features = false, features = [ "fs", "io-util", "net", "rt", "sync", "time", "macros" ] }
 binrw = "0.11.2"

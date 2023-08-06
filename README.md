@@ -145,7 +145,7 @@ To run Obiwan as a systemd unit, you can take inspiration from
 unit description, which should be a good starting point for any other
 Linux.
 
-# Support
+## Support
 
 Should you encounter any issues or have questions, please open an
 issue on GitHub.

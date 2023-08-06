@@ -86,6 +86,7 @@
             nixpkgs-fmt.enable = true;
             typos.enable = true;
             deadnix.enable = true;
+            markdownlint.enable = true;
           };
 
           # Only run integration tests on x86. The aarch64 runners

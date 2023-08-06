@@ -36,7 +36,7 @@
     };
   };
 
-  outputs = inputs@{ self, nixpkgs, crane, flake-parts, advisory-db, ... }:
+  outputs = inputs@{ self, crane, flake-parts, advisory-db, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } ({ moduleWithSystem, ... }: {
       imports = [
         # Formatting and quality checks.
@@ -85,6 +85,7 @@
           pre-commit.settings.hooks = {
             nixpkgs-fmt.enable = true;
             typos.enable = true;
+            deadnix.enable = true;
           };
 
           # Only run integration tests on x86. The aarch64 runners

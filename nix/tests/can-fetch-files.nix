@@ -2,7 +2,7 @@
 pkgs.nixosTest {
   name = "can-fetch-files";
 
-  nodes.server = { pkgs, lib, ... }: {
+  nodes.server = { pkgs, ... }: {
     imports = [
       module
     ];
@@ -45,7 +45,7 @@ pkgs.nixosTest {
       };
   };
 
-  nodes.client = { pkgs, lib, ... }: {
+  nodes.client = { pkgs, ... }: {
 
     # The TFTP server will send us packets on a new UDP port.
     networking.firewall.enable = false;

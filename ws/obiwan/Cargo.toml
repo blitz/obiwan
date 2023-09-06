@@ -8,9 +8,9 @@ license.workspace = true
 [dependencies]
 log = "0.4.20"
 anyhow = "1.0.75"
-clap = { version = "4.4.0", default-features = false, features = [ "std", "help", "usage", "derive" ] }
+clap = { version = "4.4.2", default-features = false, features = [ "std", "help", "usage", "derive" ] }
 simplelog = { version = "0.12.1", default-features = false }
-nix = "0.26.2"
+nix = { version = "0.27.1", features = [ "user", "fs" ] }
 tokio = { version = "1.32.0", default-features = false, features = [ "fs", "io-util", "net", "rt", "sync", "time", "macros" ] }
 binrw = "0.11.2"
 async-trait = "0.1.73"

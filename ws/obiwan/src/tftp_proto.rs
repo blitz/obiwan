@@ -105,8 +105,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
     async fn read_block(file: &mut FS::File, block: u64, block_size: u16) -> Result<Vec<u8>> {
         assert!(block >= 1);
 
-        let mut buf = Vec::new();
-        buf.resize(usize::from(block_size), 0);
+        let mut buf = vec![0; usize::from(block_size)];
 
         let size = file
             .read((block - 1) * u64::try_from(block_size)?, &mut buf)
@@ -322,9 +321,7 @@ impl<FS: simple_fs::Filesystem> Connection<FS> {
     ) -> Result<(Self, Response<tftp::Packet>)> {
         match event {
             Event::PacketReceived(p) => match p {
-                tftp::Packet::Ack { block } if block == 0 => {
-                    Self::send_block(file, 1, 0, block_size).await
-                }
+                tftp::Packet::Ack { block: 0 } => Self::send_block(file, 1, 0, block_size).await,
                 tftp::Packet::Error {
                     error_code,
                     error_msg,

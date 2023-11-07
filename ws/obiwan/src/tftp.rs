@@ -14,7 +14,7 @@ use std::{
     path::PathBuf,
 };
 
-use binrw::{binrw, until_eof, BinReaderExt, BinWriterExt, NullString};
+use binrw::{binrw, helpers::until_eof, BinReaderExt, BinWriterExt, NullString};
 
 /// TFTP error constants as defined by the RFC.
 #[allow(dead_code)]

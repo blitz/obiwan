@@ -7,8 +7,8 @@ license.workspace = true
 
 [dependencies]
 log = "0.4.20"
-anyhow = "1.0.79"
-clap = { version = "4.5.0", default-features = false, features = [ "std", "help", "usage", "derive" ] }
+anyhow = "1.0.80"
+clap = { version = "4.5.1", default-features = false, features = [ "std", "help", "usage", "derive" ] }
 simplelog = { version = "0.12.1", default-features = false }
 nix = { version = "0.27.1", features = [ "user", "fs" ] }
 tokio = { version = "1.36.0", default-features = false, features = [ "fs", "io-util", "net", "rt", "sync", "time", "macros" ] }

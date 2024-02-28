@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-log = "0.4.20"
+log = "0.4.21"
 anyhow = "1.0.80"
 clap = { version = "4.5.1", default-features = false, features = [ "std", "help", "usage", "derive" ] }
 simplelog = { version = "0.12.1", default-features = false }

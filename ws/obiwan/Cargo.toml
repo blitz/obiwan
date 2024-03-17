@@ -13,4 +13,4 @@ simplelog = { version = "0.12.2", default-features = false }
 nix = { version = "0.28.0", features = [ "user", "fs" ] }
 tokio = { version = "1.36.0", default-features = false, features = [ "fs", "io-util", "net", "rt", "sync", "time", "macros" ] }
 binrw = "0.13.3"
-async-trait = "0.1.77"
+async-trait = "0.1.78"

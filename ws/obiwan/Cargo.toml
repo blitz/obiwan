@@ -12,5 +12,5 @@ clap = { version = "4.5.4", default-features = false, features = [ "std", "help"
 simplelog = { version = "0.12.2", default-features = false }
 nix = { version = "0.29.0", features = [ "user", "fs" ] }
 tokio = { version = "1.37.0", default-features = false, features = [ "fs", "io-util", "net", "rt", "sync", "time", "macros" ] }
-binrw = "0.13.3"
+binrw = "0.14.0"
 async-trait = "0.1.80"
